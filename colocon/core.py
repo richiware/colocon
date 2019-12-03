@@ -118,11 +118,21 @@ def get_colcon_paths(project_name, dependencies):
 
 
 def generate_colcon_meta(build_dir, meta_paths):
-    yaml_content = {'names': {}}
+    yaml_content = None
+    colcon_meta_path = Path('colcon.meta')
+    if colcon_meta_path.is_file():
+        colcon_meta_content = colcon_meta_path.read_text()
+        yaml_content = yaml.safe_load(colcon_meta_content)
+
+    if not yaml_content:
+        yaml_content = {'names': {}}
 
     for lib in meta_paths:
-        yaml_content['names'][lib] = {}
-        yaml_content['names'][lib]['cmake-args'] = ["-DCMAKE_CXX_FLAGS=-ffile-prefix-map=" + meta_paths[lib] + "=.",
+        if lib not in yaml_content['names']:
+            yaml_content['names'][lib] = {}
+        if 'cmake-args' not in yaml_content['names'][lib]:
+            yaml_content['names'][lib]['cmake-args'] = []
+        yaml_content['names'][lib]['cmake-args'] += ["-DCMAKE_CXX_FLAGS=-ffile-prefix-map=" + meta_paths[lib] + "=.",
                                                     "-DCMAKE_C_FLAGS=-ffile-prefix-map=" + meta_paths[lib] + "=."]
 
         if not os.path.exists(build_dir):
