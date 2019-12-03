@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+
+# Copyright 2019 Ricardo González
+# Licensed under the Apache License, Version 2.0
+
+import sys
+
+from colocon.core import main
+
+if __name__ == '__main__':
+    sys.exit(main() or 0)

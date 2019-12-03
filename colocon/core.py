@@ -37,7 +37,7 @@ def load_defaults():
 
     defaults_content = defaults_path.read_text()
     yaml_content = yaml.safe_load(defaults_content)
-    if 'search_paths' in yaml_content:
+    if 'search-paths' in yaml_content:
         search_paths = yaml_content['search-paths']
     if 'compile_commands' in yaml_content:
         compile_commands = yaml_content['compile_commands']
