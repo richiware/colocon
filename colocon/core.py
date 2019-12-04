@@ -179,8 +179,8 @@ def execute_colcon(colcon_paths, meta_paths):
     if '--install-base' not in options['rest']:
         colcon_args += ['--install-base', build_dir + '/install']
 
-    generate_colcon_meta(build_dir, meta_paths)
-    colcon_args += ['--meta', build_dir]
+    #generate_colcon_meta(build_dir, meta_paths)
+    #colcon_args += ['--meta', build_dir]
 
     colcon_args += options['rest'][1:]
 
