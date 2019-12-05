@@ -92,15 +92,15 @@ def get_colcon_paths(project_name, dependencies):
             if colcon_path_base.is_dir():
                 colcon_path = colcon_path_base / final_dependencies[dep]
                 if colcon_path.is_dir():
-                    colcon_paths += [colcon_path.as_posix()]
-                    meta_paths[dep] = colcon_path.as_posix()
+                    colcon_paths += [str(colcon_path)]
+                    meta_paths[dep] = str(colcon_path)
                     found = True
                     break
                 else:
                     colcon_path = colcon_path_base / 'master'
                     if colcon_path.is_dir():
-                        colcon_paths += [colcon_path.as_posix()]
-                        meta_paths[dep] = colcon_path.as_posix()
+                        colcon_paths += [str(colcon_path)]
+                        meta_paths[dep] = str(colcon_path)
                         found = True
                         break
         if not found:
@@ -108,11 +108,11 @@ def get_colcon_paths(project_name, dependencies):
 
     if not '.' == options['project_dir']:
         project_path = Path(options['project_dir'])
-        colcon_paths += [project_path.resolve().as_posix()]
-        meta_paths[project_name] = project_path.resolve().as_posix()
+        colcon_paths += [str(project_path.resolve())]
+        meta_paths[project_name] = str(project_path.resolve())
     else:
         current_path = Path('.')
-        meta_paths[project_name] = current_path.resolve().as_posix()
+        meta_paths[project_name] = str(current_path.resolve())
 
     return colcon_paths, meta_paths
 
