@@ -4,6 +4,7 @@
 import argparse
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -168,10 +169,11 @@ def execute_colcon(colcon_paths, meta_paths):
     else:
         colcon_args += ['--mixin', 'rel-with-deb-info']
 
-    build_dir = 'build-'
+    build_dir = 'build'
     if '--build-base' not in options['rest']:
-        build_dir += build_suffix
-        colcon_args += ['--build-base', build_dir]
+        if sys.platform != 'win32':
+            build_dir += '-' + build_suffix
+            colcon_args += ['--build-base', build_dir]
     else:
         position = options['rest'].index('--build-base')
         build_dir = options['rest'][position + 1]
