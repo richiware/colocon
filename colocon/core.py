@@ -13,6 +13,7 @@ options = []
 search_paths = []
 compile_commands = False
 
+
 def arg_parser(args):
     global options
     parser = argparse.ArgumentParser(
@@ -64,6 +65,7 @@ def get_colcon_paths(project_name, dependencies):
     global options
     global search_paths
     final_dependencies = {}
+    yaml_content = None
 
     # Use {project_name}.repos to get info about dependencies
     repos_path = Path(options['project_dir']) / (project_name + '.repos')
@@ -85,6 +87,7 @@ def get_colcon_paths(project_name, dependencies):
                     final_dependencies[repository] = 'master'
 
     colcon_paths = []
+    colcon_rec_paths = []
     meta_paths = {}
     for dep in final_dependencies:
         found = False
@@ -93,14 +96,20 @@ def get_colcon_paths(project_name, dependencies):
             if colcon_path_base.is_dir():
                 colcon_path = colcon_path_base / final_dependencies[dep]
                 if colcon_path.is_dir():
-                    colcon_paths += [str(colcon_path)]
+                    if 'recursive' in yaml_content['repositories'][dep] and yaml_content['repositories'][dep]['recursive']:
+                        colcon_rec_paths += [str(colcon_path)]
+                    else:
+                        colcon_paths += [str(colcon_path)]
                     meta_paths[dep] = str(colcon_path)
                     found = True
                     break
                 else:
                     colcon_path = colcon_path_base / 'master'
                     if colcon_path.is_dir():
-                        colcon_paths += [str(colcon_path)]
+                        if 'recursive' in yaml_content['repositories'][dep] and yaml_content['repositories'][dep]['recursive']:
+                            colcon_rec_paths += [str(colcon_path)]
+                        else:
+                            colcon_paths += [str(colcon_path)]
                         meta_paths[dep] = str(colcon_path)
                         found = True
                         break
@@ -113,9 +122,10 @@ def get_colcon_paths(project_name, dependencies):
         meta_paths[project_name] = str(project_path.resolve())
     else:
         current_path = Path('.')
+        colcon_paths += [str(current_path.resolve())]
         meta_paths[project_name] = str(current_path.resolve())
 
-    return colcon_paths, meta_paths
+    return colcon_paths, colcon_rec_paths, meta_paths
 
 
 def generate_colcon_meta(build_dir, meta_paths):
@@ -141,13 +151,14 @@ def generate_colcon_meta(build_dir, meta_paths):
         with open(build_dir + '/colcon.meta', 'w') as file:
             document = yaml.dump(yaml_content, file)
 
+
 def support_paths(verb):
-    if verb == 'build' or verb == 'test':
+    if verb == 'build' or verb == 'test' or verb == 'graph':
         return True
     return False
 
 
-def execute_colcon(colcon_paths, meta_paths):
+def execute_colcon(colcon_paths, colcon_rec_paths, meta_paths):
     colcon_args = ['colcon']
     build_suffix = 'rel-with-deb-info'
 
@@ -159,6 +170,9 @@ def execute_colcon(colcon_paths, meta_paths):
 
     if support_paths(verb) and colcon_paths:
         colcon_args += ['--paths'] + colcon_paths
+
+    if support_paths(verb) and colcon_rec_paths:
+        colcon_args += ['--base-paths'] + colcon_rec_paths
 
     if '--mixin' in options['rest']:
         position = options['rest'].index('--mixin')
@@ -178,11 +192,11 @@ def execute_colcon(colcon_paths, meta_paths):
         position = options['rest'].index('--build-base')
         build_dir = options['rest'][position + 1]
 
-    if '--install-base' not in options['rest']:
+    if '--install-base' not in options['rest'] and verb != 'graph':
         colcon_args += ['--install-base', build_dir + '/install']
 
-    #generate_colcon_meta(build_dir, meta_paths)
-    #colcon_args += ['--meta', build_dir]
+    # generate_colcon_meta(build_dir, meta_paths)
+    # colcon_args += ['--meta', build_dir]
 
     colcon_args += options['rest'][1:]
 
@@ -206,7 +220,6 @@ def generate_compile_commands(build_dir):
     list_files = find_proc.stdout.readline().decode('utf-8').rstrip()
     find_proc.communicate()
     retcode = find_proc.returncode
-
 
     if retcode == 0:
         subprocess.call('jq -s add ' + list_files + ' > compile_commands.json', shell=True)
@@ -241,9 +254,9 @@ def main(argv=None):
         print("Cannot get info from colcon.pkg")
         return -1
 
-    colcon_paths, meta_paths = get_colcon_paths(project_name, depends)
+    colcon_paths, colcon_rec_paths, meta_paths = get_colcon_paths(project_name, depends)
 
-    retcode, build_dir = execute_colcon(colcon_paths, meta_paths)
+    retcode, build_dir = execute_colcon(colcon_paths, colcon_rec_paths, meta_paths)
     if not retcode:
         return -1
 
