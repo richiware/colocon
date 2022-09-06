@@ -173,15 +173,15 @@ def execute_colcon(colcon_paths, colcon_rec_paths, meta_paths):
 
     if support_paths(verb) and colcon_rec_paths:
         colcon_args += ['--base-paths'] + colcon_rec_paths
-
-    if '--mixin' in options['rest']:
-        position = options['rest'].index('--mixin')
-        del options['rest'][position]
-        build_suffix = options['rest'][position]
-        colcon_args += ['--mixin', options['rest'][position]]
-        del options['rest'][position]
-    else:
-        colcon_args += ['--mixin', 'rel-with-deb-info']
+    if 'build' == verb:
+        if '--mixin' in options['rest']:
+            position = options['rest'].index('--mixin')
+            del options['rest'][position]
+            build_suffix = options['rest'][position]
+            colcon_args += ['--mixin', options['rest'][position]]
+            del options['rest'][position]
+        else:
+            colcon_args += ['--mixin', 'rel-with-deb-info']
 
     build_dir = 'build'
     if '--build-base' not in options['rest']:
