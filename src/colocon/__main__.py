@@ -3,6 +3,7 @@
 
 import sys
 
-import colocon.core
+from colocon.cli import main
 
-sys.exit(colocon.core.main())
+if __name__ == '__main__':
+    sys.exit(main())

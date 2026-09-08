@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "colocon"
 description = "Run colcon against repositories laid out as git worktrees."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{name = "Ricardo González", email = "correoricky@gmail.com"}]
+authors = [{name = "Ricardo González", email = "ricardo@richiware.dev"}]
 keywords = ["colcon", "ros", "ros2", "git-worktree", "build"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -31,23 +31,29 @@ Source = "https://github.com/richiware/colocon"
 Issues = "https://github.com/richiware/colocon/issues"
 
 [project.scripts]
-colocon = "colocon.core:main"
+colocon = "colocon.cli:main"
 
-[tool.setuptools]
-packages = ["colocon"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools.dynamic]
 version = {attr = "colocon.__version__"}
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+src = ["src"]
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.format]
+quote-style = "single"
+
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
+mypy_path = "src"
+packages = ["colocon"]
 warn_unused_configs = true
 
 [tool.pytest.ini_options]
