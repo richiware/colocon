@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -18,6 +17,11 @@ DEFAULT_MIXIN = 'rel-with-deb-info'
 
 #: Verbs that accept ``--paths`` and ``--base-paths``.
 PATH_VERBS = frozenset({'build', 'test', 'graph'})
+
+#: Build directory colcon uses when it is not told otherwise. `colocon` never
+#: passes ``--build-base``, so this is where the compilation databases are
+#: looked for unless the user asked for somewhere else.
+COLCON_BUILD_DIR = 'build'
 
 #: Exit code conventionally reported for a command killed by SIGINT.
 INTERRUPTED_RETURN_CODE = 130
@@ -39,34 +43,21 @@ def _option_value(args: Sequence[str], name: str) -> str:
     return args[position + 1]
 
 
-def _take_option(args: list, name: str) -> str | None:
-    """Remove `name` and its value from `args`, returning the value.
-
-    Returns ``None`` when `name` is absent.
-    """
-    if name not in args:
-        return None
-    position = args.index(name)
-    value = _option_value(args, name)
-    del args[position:position + 2]
-    return value
-
-
-def build_argv(
-    rest: Sequence[str],
-    resolved: ResolvedPaths,
-    platform: str | None = None,
-) -> tuple[list, str]:
+def build_argv(rest: Sequence[str], resolved: ResolvedPaths) -> tuple[list, str]:
     """Build the ``colcon`` command line.
 
     `rest` is the verb followed by the arguments meant for ``colcon``. Returns
-    the command line and the build directory it uses, which the caller needs to
-    collect the compilation databases afterwards.
+    the command line and the build directory, which the caller needs to collect
+    the compilation databases afterwards.
+
+    Where `colcon` builds and installs is left to `colcon`: ``--build-base``
+    and ``--install-base`` are never added, and are forwarded untouched when
+    the user passes them. The build directory is therefore only read, never
+    chosen.
     """
     if not rest:
         raise ValueError('no colcon verb given')
 
-    platform = sys.platform if platform is None else platform
     verb = rest[0]
     forwarded = list(rest[1:])
     argv = ['colcon', verb]
@@ -77,26 +68,14 @@ def build_argv(
         if resolved.recursive_paths:
             argv += ['--base-paths', *resolved.recursive_paths]
 
-    # The mixin doubles as the build directory suffix, so that every build type
-    # gets its own directory. Only `build` understands --mixin; for any other
-    # verb the argument is left in `forwarded` and passed through untouched.
-    build_suffix = DEFAULT_MIXIN
-    if verb == 'build':
-        mixin = _take_option(forwarded, '--mixin')
-        if mixin is not None:
-            build_suffix = mixin
-        argv += ['--mixin', build_suffix]
+    # Only `build` understands --mixin. A mixin the user asked for is left in
+    # `forwarded`, so it reaches colcon exactly as it was written.
+    if verb == 'build' and '--mixin' not in forwarded:
+        argv += ['--mixin', DEFAULT_MIXIN]
 
-    build_dir = 'build'
+    build_dir = COLCON_BUILD_DIR
     if '--build-base' in forwarded:
         build_dir = _option_value(forwarded, '--build-base')
-    elif platform != 'win32':
-        # On Windows colcon's own default build directory is kept.
-        build_dir = 'build-' + build_suffix
-        argv += ['--build-base', build_dir]
-
-    if '--install-base' not in forwarded and verb != 'graph':
-        argv += ['--install-base', build_dir + '/install']
 
     return argv + forwarded, build_dir
 

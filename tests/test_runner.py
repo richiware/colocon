@@ -7,6 +7,7 @@ import pytest
 
 from colocon.resolve import ResolvedPaths
 from colocon.runner import (
+    COLCON_BUILD_DIR,
     DEFAULT_MIXIN,
     build_argv,
     merge_compile_commands,
@@ -39,85 +40,101 @@ class TestBuildArgv:
             build_argv([], RESOLVED)
 
     def test_paths_are_passed(self):
-        argv, _ = build_argv(['build'], RESOLVED, platform='linux')
+        argv, _ = build_argv(['build'], RESOLVED)
         assert argv[:5] == ['colcon', 'build', '--paths', '/dep', '/project']
 
     def test_recursive_paths_use_base_paths(self):
-        argv, _ = build_argv(['build'], RESOLVED, platform='linux')
+        argv, _ = build_argv(['build'], RESOLVED)
         assert option_value(argv, '--base-paths') == '/rec'
 
     def test_no_paths_for_other_verbs(self):
-        argv, _ = build_argv(['list'], RESOLVED, platform='linux')
+        argv, _ = build_argv(['list'], RESOLVED)
         assert '--paths' not in argv
         assert '--base-paths' not in argv
 
     def test_empty_paths_are_omitted(self):
-        argv, _ = build_argv(['build'], ResolvedPaths(), platform='linux')
+        argv, _ = build_argv(['build'], ResolvedPaths())
         assert '--paths' not in argv
         assert '--base-paths' not in argv
 
-    def test_default_mixin(self):
-        argv, build_dir = build_argv(['build'], RESOLVED, platform='linux')
-        assert option_value(argv, '--mixin') == DEFAULT_MIXIN
-        assert build_dir == 'build-' + DEFAULT_MIXIN
-
-    def test_requested_mixin_names_the_build_directory(self):
-        argv, build_dir = build_argv(['build', '--mixin', 'debug'], RESOLVED, platform='linux')
-        assert option_value(argv, '--mixin') == 'debug'
-        assert build_dir == 'build-debug'
-        assert option_value(argv, '--build-base') == 'build-debug'
-
-    def test_requested_mixin_is_not_duplicated(self):
-        argv, _ = build_argv(['build', '--mixin', 'debug'], RESOLVED, platform='linux')
-        assert argv.count('--mixin') == 1
-        assert argv.count('debug') == 1
-
-    def test_mixin_without_value(self):
-        with pytest.raises(ValueError, match='--mixin'):
-            build_argv(['build', '--mixin'], RESOLVED, platform='linux')
-
-    def test_mixin_is_forwarded_untouched_for_other_verbs(self):
-        argv, _ = build_argv(['test', '--mixin', 'debug'], RESOLVED, platform='linux')
-        assert argv[-2:] == ['--mixin', 'debug']
-
-    def test_install_base_derives_from_the_build_directory(self):
-        argv, _ = build_argv(['build'], RESOLVED, platform='linux')
-        assert option_value(argv, '--install-base') == 'build-' + DEFAULT_MIXIN + '/install'
-
-    def test_requested_build_base_is_respected(self):
-        argv, build_dir = build_argv(['build', '--build-base', 'out'], RESOLVED, platform='linux')
-        assert build_dir == 'out'
-        assert argv.count('--build-base') == 1
-        assert option_value(argv, '--install-base') == 'out/install'
-
-    def test_build_base_without_value(self):
-        with pytest.raises(ValueError, match='--build-base'):
-            build_argv(['build', '--build-base'], RESOLVED, platform='linux')
-
-    def test_requested_install_base_is_not_overridden(self):
-        argv, _ = build_argv(['build', '--install-base', 'out'], RESOLVED, platform='linux')
-        assert argv.count('--install-base') == 1
-        assert option_value(argv, '--install-base') == 'out'
-
-    def test_graph_gets_no_install_base(self):
-        argv, _ = build_argv(['graph'], RESOLVED, platform='linux')
-        assert '--install-base' not in argv
-
-    def test_windows_keeps_the_colcon_build_directory(self):
-        argv, build_dir = build_argv(['build'], RESOLVED, platform='win32')
-        assert '--build-base' not in argv
-        assert build_dir == 'build'
-        assert option_value(argv, '--install-base') == 'build/install'
-
     def test_remaining_arguments_are_forwarded_last(self):
-        argv, _ = build_argv(
-                ['build', '--packages-select', 'project1', '--symlink-install'], RESOLVED, platform='linux')
+        argv, _ = build_argv(['build', '--packages-select', 'project1', '--symlink-install'], RESOLVED)
         assert argv[-3:] == ['--packages-select', 'project1', '--symlink-install']
 
     def test_does_not_mutate_the_given_arguments(self):
         rest = ['build', '--mixin', 'debug']
-        build_argv(rest, RESOLVED, platform='linux')
+        build_argv(rest, RESOLVED)
         assert rest == ['build', '--mixin', 'debug']
+
+
+class TestBuildAndInstallDirectories:
+    """Where colcon builds and installs is colcon's business, not colocon's."""
+
+    @pytest.mark.parametrize('verb', ['build', 'test', 'graph', 'list'])
+    def test_no_directory_is_chosen(self, verb):
+        argv, build_dir = build_argv([verb], RESOLVED)
+
+        assert '--build-base' not in argv
+        assert '--install-base' not in argv
+        assert build_dir == COLCON_BUILD_DIR
+
+    def test_requested_build_base_is_forwarded_untouched(self):
+        argv, build_dir = build_argv(['build', '--build-base', 'out'], RESOLVED)
+
+        assert argv[-2:] == ['--build-base', 'out']
+        assert argv.count('--build-base') == 1
+        # Read only, so that the compilation databases can be found afterwards.
+        assert build_dir == 'out'
+
+    def test_requested_build_base_gains_no_install_base(self):
+        argv, _ = build_argv(['build', '--build-base', 'out'], RESOLVED)
+        assert '--install-base' not in argv
+
+    def test_requested_install_base_is_forwarded_untouched(self):
+        argv, _ = build_argv(['build', '--install-base', 'out'], RESOLVED)
+
+        assert argv[-2:] == ['--install-base', 'out']
+        assert argv.count('--install-base') == 1
+
+    def test_build_base_without_value(self):
+        with pytest.raises(ValueError, match='--build-base'):
+            build_argv(['build', '--build-base'], RESOLVED)
+
+
+class TestMixin:
+
+    def test_default_mixin(self):
+        argv, _ = build_argv(['build'], RESOLVED)
+        assert option_value(argv, '--mixin') == DEFAULT_MIXIN
+
+    def test_requested_mixin_replaces_the_default(self):
+        argv, _ = build_argv(['build', '--mixin', 'debug'], RESOLVED)
+
+        assert argv.count('--mixin') == 1
+        assert option_value(argv, '--mixin') == 'debug'
+        assert DEFAULT_MIXIN not in argv
+
+    def test_requested_mixin_does_not_name_a_directory(self):
+        argv, build_dir = build_argv(['build', '--mixin', 'debug'], RESOLVED)
+
+        assert build_dir == COLCON_BUILD_DIR
+        assert '--build-base' not in argv
+
+    def test_mixin_without_value_is_left_to_colcon(self):
+        # colocon no longer reads the mixin, so a malformed one is colcon's to
+        # complain about.
+        argv, _ = build_argv(['build', '--mixin'], RESOLVED)
+        assert argv[-1] == '--mixin'
+
+    def test_no_mixin_for_other_verbs(self):
+        argv, _ = build_argv(['test'], RESOLVED)
+        assert '--mixin' not in argv
+
+    def test_mixin_is_forwarded_untouched_for_other_verbs(self):
+        argv, _ = build_argv(['test', '--mixin', 'debug'], RESOLVED)
+
+        assert argv[-2:] == ['--mixin', 'debug']
+        assert argv.count('--mixin') == 1
 
 
 class TestMergeCompileCommands:

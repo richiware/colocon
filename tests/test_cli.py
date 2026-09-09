@@ -5,6 +5,7 @@ import pytest
 
 from colocon import cli
 from colocon.config import Config
+from colocon.runner import COLCON_BUILD_DIR
 
 
 @pytest.fixture
@@ -45,12 +46,28 @@ class TestMain:
         assert 'verb' in capsys.readouterr().err
 
     def test_option_without_value(self, config, write_pkg, capsys):
-        assert cli.main(['-p', str(write_pkg(name='project1')), 'build', '--mixin']) == 2
-        assert '--mixin' in capsys.readouterr().err
+        assert cli.main(['-p', str(write_pkg(name='project1')), 'build', '--build-base']) == 2
+        assert '--build-base' in capsys.readouterr().err
 
     def test_successful_run(self, config, colcon, write_pkg):
         assert cli.main(['-p', str(write_pkg(name='project1')), 'build']) == 0
         assert colcon.calls[0][:2] == ['colcon', 'build']
+
+    def test_build_and_install_directories_are_left_to_colcon(self, config, colcon, write_pkg):
+        assert cli.main(['-p', str(write_pkg(name='project1')), 'build']) == 0
+
+        argv = colcon.calls[0]
+        assert '--build-base' not in argv
+        assert '--install-base' not in argv
+
+    def test_requested_directories_reach_colcon_untouched(self, config, colcon, write_pkg):
+        project_dir = str(write_pkg(name='project1'))
+        arguments = ['build', '--build-base', 'out', '--install-base', 'out/install']
+
+        assert cli.main(['-p', project_dir, *arguments]) == 0
+
+        argv = colcon.calls[0]
+        assert argv[-4:] == ['--build-base', 'out', '--install-base', 'out/install']
 
     def test_colcon_exit_code_is_propagated(self, config, colcon, write_pkg):
         colcon.retcode = 17
@@ -151,9 +168,7 @@ class TestCompileCommands:
 
         cli.main(['-p', str(write_pkg(name='project1')), 'build'])
 
-        # How the build directory is named is checked in test_runner, which is
-        # the only place that pins it per platform.
-        assert len(called) == 1
+        assert called == [COLCON_BUILD_DIR]
 
     def test_not_joined_when_colcon_failed(self, config, colcon, monkeypatch, write_pkg):
         config(compile_commands=True)
