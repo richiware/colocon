@@ -10,4 +10,3 @@ Then `colocon` must search the file `${project_name}.repos` and obtain the depen
 * Must fill and pass to colcon correct `-fdebug-prefix-map` inside `-DCMAKE_CXX_FLAGS`.
 * After calling `colcon`, `colocon` has to find all `compile_commands.json` and join them to a unique
 `compile_commands.json`.
-

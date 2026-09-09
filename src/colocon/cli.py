@@ -74,6 +74,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return retcode
 
     if config.compile_commands:
-        merge_compile_commands(build_dir)
+        # The build itself succeeded, so an unreadable database is reported but
+        # does not turn into a failure.
+        try:
+            merge_compile_commands(build_dir)
+        except (OSError, ValueError) as error:
+            print('Cannot join the compilation databases: ' + str(error), file=sys.stderr)
 
     return 0

@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from colocon.resolve import ResolvedPaths
 
@@ -19,6 +21,9 @@ PATH_VERBS = frozenset({'build', 'test', 'graph'})
 
 #: Exit code conventionally reported for a command killed by SIGINT.
 INTERRUPTED_RETURN_CODE = 130
+
+#: Name of the compilation databases colcon leaves behind.
+COMPILE_COMMANDS = 'compile_commands.json'
 
 
 def supports_paths(verb: str) -> bool:
@@ -104,16 +109,25 @@ def run_colcon(argv: Sequence[str]) -> int:
         return INTERRUPTED_RETURN_CODE
 
 
-def merge_compile_commands(build_dir: str) -> None:
-    """Join every ``compile_commands.json`` under `build_dir` into one."""
-    find_proc = subprocess.Popen(
-            'find ' + build_dir + ' -iname compile_commands.json -print0 | grep -z . | xargs -0',
-            stdout=subprocess.PIPE, shell=True)
-    find_proc.wait()
-    stdout = find_proc.stdout
-    list_files = stdout.readline().decode('utf-8').rstrip() if stdout else ''
-    find_proc.communicate()
-    retcode = find_proc.returncode
+def merge_compile_commands(build_dir: str, output_path: str | Path = COMPILE_COMMANDS) -> int:
+    """Join every compilation database under `build_dir` into `output_path`.
 
-    if retcode == 0:
-        subprocess.call('jq -s add ' + list_files + ' > compile_commands.json', shell=True)
+    Every ``compile_commands.json`` produced by the packages is concatenated
+    into a single one, so that language servers see the whole project. Returns
+    the number of databases merged; `output_path` is left untouched when there
+    is none.
+    """
+    output = Path(output_path)
+    databases = sorted(
+        database for database in Path(build_dir).rglob(COMPILE_COMMANDS)
+        if database.resolve() != output.resolve()
+    )
+    if not databases:
+        return 0
+
+    entries: list = []
+    for database in databases:
+        entries += json.loads(database.read_text())
+
+    output.write_text(json.dumps(entries, indent=2))
+    return len(databases)

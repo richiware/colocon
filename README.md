@@ -40,6 +40,22 @@ repos
 ```
 
 
+## Installation
+
+Requires Python 3.10+ and `colcon` available on `PATH`.
+
+```bash
+pipx install git+https://github.com/richiware/colocon.git
+```
+
+Or from a checkout, for development:
+
+```bash
+pip install -e '.[dev]'
+pre-commit install     # optional, runs the linter on every commit
+pytest
+```
+
 ## Default configuration
 
 `colocon` uses the default configuration file `~/.colcon/colocon.yaml` to set default options.
