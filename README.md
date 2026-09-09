@@ -1,81 +1,236 @@
 # colocon
 
-This utility configures and uses `colcon` in a different manner.
-The default way of working with `colcon` is having all repositories cloned under a directory with an specific version.
-This way is not proper if you like to work with Git worktrees as I like.
-Therefore, I created this utility to make `colcon` works in another way.
+[![CI](https://github.com/richiware/colocon/actions/workflows/ci.yml/badge.svg)](https://github.com/richiware/colocon/actions/workflows/ci.yml)
 
-`colocon` is prepare to work in the following development environment:
+A thin wrapper around [`colcon`](https://colcon.readthedocs.io) for projects kept in **git worktrees**.
 
-* Repositories are located in one or several directories:
+`colcon` expects a single workspace holding every repository at one version. That model gets in the way as soon
+as you keep several branches of the same repository side by side — which is exactly what git worktrees are for.
+`colocon` bridges the two: it works out which worktree each dependency should be built from, hands the resulting
+paths to `colcon`, and leaves every other decision to `colcon` itself.
+
+- [Repository layout](#repository-layout)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Describing a project](#describing-a-project)
+- [How dependencies are resolved](#how-dependencies-are-resolved)
+- [Compilation database](#compilation-database)
+- [Development](#development)
+
+## Repository layout
+
+`colocon` expects one directory per repository, and inside it one directory per worktree, named after the branch
+or tag it holds:
+
 ```
-repos
-|
-|__fastcdr
-|
-|__foonathan_memory_vendor
-|
-|__fastrtps
-```
-* Inside each project there are several directories.
-Each one is a Git worktree of the repository. Usually at least one should be: `master`.
-```
-repos
-|
-|__fastcdr
-|  |
-|  |__master
-|  |
-|  |__v1.0.11
-|
-|__foonathan_memory_vendor
-|  |
-|  |__master
-|
-|__fastrtps
-   |
-   |__master
-   |
-   |__1.9.x
+~/repos/                     <- a search path
+├── nebula/
+│   ├── master
+│   └── feature/warp-drive
+├── quasar/
+│   ├── master
+│   └── 2.3.x
+├── pulsar/
+│   └── master
+└── stardust/
+    └── 1.0
 ```
 
+Create such a worktree the usual way:
+
+```bash
+git -C ~/repos/quasar/master worktree add ../2.3.x 2.3.x
+```
+
+You may keep repositories under more than one search path; they are searched in the order they are configured.
 
 ## Installation
 
-Requires Python 3.10+ and `colcon` available on `PATH`.
+Requires Python 3.10+ and `colcon` on `PATH`.
 
 ```bash
 pipx install git+https://github.com/richiware/colocon.git
 ```
 
-Or from a checkout, for development:
+## Configuration
 
-```bash
-pip install -e '.[dev]'
-pre-commit install     # optional, runs the linter on every commit
-pytest
-```
-
-## Default configuration
-
-`colocon` uses the default configuration file `~/.colcon/colocon.yaml` to set default options.
+`colocon` reads `~/.colcon/colocon.yaml`:
 
 ```yaml
-{
-    "search-paths" : [ "/home/developer/repos" ],
-    "compile_commands" : True
-}
+search-paths:
+  - /home/developer/repos
+  - /opt/vendor/repos
+compile_commands: true
 ```
 
-* `search-paths`: list of paths where `colocon` will search the dependencies.
-* `compile_commands`: if True, after calling `colcon`, `colocon` will search all `compile_commands.json` and join them
-in one `compile_commands.json` in the working directory.
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `search-paths` | list of paths | empty | Where to look for dependency repositories, in order. |
+| `compile_commands` | boolean | `false` | Join every `compile_commands.json` after a successful build. |
 
-## What `colocon` does?
+Paths must be **absolute**: `~` and `$HOME` are not expanded, and a path containing them silently matches
+nothing. A missing or empty configuration file is fine — `colocon` then reports every dependency it could not
+locate and builds the project on its own.
 
-`colocon` searches in the working directory or in the path passed with the argument `--project-dir` a `colcon.pkg`
-file. This file is used to get the project to be compiled and the dependencies. Afterwards `colocon` searches a *repos*
-file using the project's name (`{project's name}.repos`) and also gets the listed dependencies and their versions. Makes
-an *inner-join* between dependencies information of `colcon.pkg` and `{project_name}.repos`. `colocon` will look for the
-resulted dependencies (and the worktree correspondent to the version) in the `search-paths`. At the end `colocon` will
-call `colcon` to build the project and all the found dependencies.
+## Usage
+
+Run `colocon` from a worktree, with any `colcon` verb and arguments:
+
+```bash
+cd ~/repos/nebula/feature/warp-drive
+colocon build
+colocon build --mixin debug --packages-select nebula
+colocon test
+```
+
+### Options
+
+`colocon` owns two arguments; everything else is forwarded to `colcon` untouched.
+
+| Option | Meaning |
+| --- | --- |
+| `-p`, `--project-dir DIR` | Root of the project to build. Defaults to the working directory. |
+| `-a`, `--all` | Use every repository listed in the *repos* file, not only the declared dependencies. |
+
+Both must come **before** the verb. Everything from the verb onwards belongs to `colcon`, so `colocon build
+--all` forwards `--all` to `colcon` rather than acting on it.
+
+### What `colocon` adds
+
+For the `build`, `test` and `graph` verbs:
+
+| Argument | Value |
+| --- | --- |
+| `--paths` | The worktree of each resolved dependency, and the project directory itself last. |
+| `--base-paths` | The worktree of each dependency marked `recursive`. |
+
+For `build` only, `--mixin rel-with-deb-info` is added unless you pass a `--mixin` of your own.
+
+Nothing else is touched. In particular `colocon` **never** chooses where `colcon` builds or installs: it adds
+neither `--build-base` nor `--install-base`, and forwards both untouched when you pass them.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success. |
+| `1` | `colcon.pkg` could not be read, or no verb was given. |
+| `2` | An argument `colocon` needs to read is malformed, such as a `--build-base` with no value. |
+| `130` | Interrupted with <kbd>Ctrl</kbd>+<kbd>C</kbd>. |
+| *other* | Whatever `colcon` returned, forwarded unchanged. |
+
+## Describing a project
+
+Two files in the project's worktree drive the resolution.
+
+### `colcon.pkg`
+
+The project's own name and the dependencies it wants built alongside it:
+
+```yaml
+name: nebula
+dependencies:
+  - quasar
+  - stardust
+```
+
+`colocon` reads only `name` and `dependencies`; the rest of the file belongs to `colcon`.
+
+### `<project>.repos`
+
+A [vcstool](https://github.com/dirk-thomas/vcstool) *repos* file named after the project — `nebula.repos` — saying
+which version of each repository this project expects:
+
+```yaml
+repositories:
+  quasar:
+    type: git
+    url: git@github.com:example/quasar.git
+    version: 2.3.x
+  pulsar:
+    type: git
+    url: git@github.com:example/pulsar.git
+    version: master
+  stardust:
+    type: git
+    url: git@github.com:example/stardust.git
+    version: "1.0"
+    recursive: true
+```
+
+| Key | Meaning |
+| --- | --- |
+| `version` | Worktree to build this dependency from. Defaults to `master`. |
+| `recursive` | `colocon` extension. Pass this repository through `--base-paths`, so `colcon` searches it recursively for packages. Useful for a repository holding several packages. |
+
+> **Quote numeric versions.** YAML resolves an unquoted `1.10` to the number `1.1`, and the worktree is then
+> looked up under the wrong name. Write `version: "1.10"`.
+
+## How dependencies are resolved
+
+1. Read `name` and `dependencies` from `colcon.pkg`.
+2. Read the `repositories` of `<name>.repos`.
+3. Join the two: a repository is selected when it is a declared dependency. With `--all`, every repository is
+   selected except the project itself.
+4. For each selected repository, look for the first of these that exists, across the search paths in order:
+   `<search-path>/<name>/<version>`, then `<search-path>/<name>/master`.
+5. Pass what was found to `colcon`, together with the project directory.
+
+A dependency whose worktree cannot be found is reported on stderr and skipped — the build still runs, and
+`colcon` fails later if the dependency was really needed.
+
+### Chains of dependencies
+
+`colocon` reads the `colcon.pkg` of the project it was run from, and of no other. It does not walk the
+dependency graph — that is `colcon`'s job.
+
+The files above describe such a chain: `nebula` depends on `quasar`, and `quasar` in turn depends on `pulsar`.
+Because only `quasar` and `stardust` are declared in `nebula`'s `colcon.pkg`, `pulsar` gets no path even though
+the *repos* file pins a version for it:
+
+```console
+$ colocon build
+colcon build --paths ~/repos/quasar/2.3.x ~/repos/nebula/master \
+             --base-paths ~/repos/stardust/1.0 --mixin rel-with-deb-info
+```
+
+To cover the whole chain, either declare every level in `colcon.pkg`, or keep the *repos* file as the single
+source of truth and use `--all`:
+
+```console
+$ colocon --all build
+colcon build --paths ~/repos/quasar/2.3.x ~/repos/pulsar/master ~/repos/nebula/master \
+             --base-paths ~/repos/stardust/1.0 --mixin rel-with-deb-info
+```
+
+## Compilation database
+
+With `compile_commands: true`, a successful build is followed by a merge of every `compile_commands.json` found
+under the build directory into a single one in the working directory, which is what most language servers expect.
+
+The build directory searched is `colcon`'s own default, `build`, or the one you passed with `--build-base`. The
+merge is pure Python — no `find`, `xargs` or `jq` needed — and a database that cannot be read is reported without
+failing the build.
+
+## Development
+
+```bash
+git clone git@github.com:richiware/colocon.git
+cd colocon
+pip install -e ".[dev]"
+pre-commit install     # optional: runs the linter on every commit
+```
+
+| Command | Purpose |
+| --- | --- |
+| `pytest` | Run the test suite. |
+| `ruff check .` | Lint. |
+| `mypy` | Type check. |
+
+Install the package as editable before running the tests: the sources live in `src/`, so a non-editable install
+would leave `pytest` testing the installed copy instead of your working tree.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
