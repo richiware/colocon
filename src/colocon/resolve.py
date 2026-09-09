@@ -46,14 +46,12 @@ class ResolvedPaths:
     """Directories to hand over to `colcon`.
 
     `paths` and `recursive_paths` become ``--paths`` and ``--base-paths``
-    respectively; `meta_paths` maps every package name (dependencies plus the
-    project itself) to its directory; `missing` lists the dependencies whose
-    worktree could not be found.
+    respectively; `missing` lists the dependencies whose worktree could not be
+    found.
     """
 
     paths: tuple[str, ...] = ()
     recursive_paths: tuple[str, ...] = ()
-    meta_paths: dict[str, str] = dataclasses.field(default_factory=dict)
     missing: tuple[str, ...] = ()
 
 
@@ -146,7 +144,6 @@ def resolve_paths(
     search_paths = tuple(search_paths)
     paths = []
     recursive_paths = []
-    meta_paths = {}
     missing = []
 
     selected = select_dependencies(repositories, project_info.dependencies, project_info.name, include_all)
@@ -159,15 +156,11 @@ def resolve_paths(
             recursive_paths.append(str(worktree))
         else:
             paths.append(str(worktree))
-        meta_paths[name] = str(worktree)
 
-    project_path = str(Path(project_dir).resolve())
-    paths.append(project_path)
-    meta_paths[project_info.name] = project_path
+    paths.append(str(Path(project_dir).resolve()))
 
     return ResolvedPaths(
         paths=tuple(paths),
         recursive_paths=tuple(recursive_paths),
-        meta_paths=meta_paths,
         missing=tuple(missing),
     )

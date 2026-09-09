@@ -171,16 +171,6 @@ class TestResolvePaths:
 
         assert resolved.paths == (str(project_dir.resolve()),)
 
-    def test_meta_paths_cover_dependencies_and_project(self, project_dir, search_path):
-        info = ProjectInfo(name='project1', dependencies=('project2', 'project4'))
-        resolved = resolve_paths(project_dir, info, self.repositories(), [search_path])
-
-        assert resolved.meta_paths == {
-            'project2': str(search_path / 'project2' / '2.x'),
-            'project4': str(search_path / 'project4' / '4.x'),
-            'project1': str(project_dir),
-        }
-
     def test_include_all_uses_every_repository(self, project_dir, search_path):
         info = ProjectInfo(name='project1', dependencies=())
         resolved = resolve_paths(project_dir, info, self.repositories(), [search_path], include_all=True)
@@ -215,8 +205,8 @@ class TestDependencyChain:
         resolved = resolve_paths(project_dir, info, self.REPOSITORIES, [search_path])
 
         # Both projects also have a `master` worktree, which must not be taken.
-        assert resolved.meta_paths['project2'].endswith('2.x')
-        assert resolved.meta_paths['project3'].endswith('3.x')
+        assert resolved.paths[:2] == (str(chain.project2), str(chain.project3))
+        assert not any(path.endswith(DEFAULT_VERSION) for path in resolved.paths)
 
     def test_indirect_level_is_left_to_colcon(self, chain, project_dir, search_path):
         # project1 declares only project2; project3 is project2's own

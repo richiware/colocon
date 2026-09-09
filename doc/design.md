@@ -7,6 +7,5 @@ Then `colocon` must search the file `${project_name}.repos` and obtain the depen
 * Must leave the build and install directories to `colcon`. `colocon` must never add `--build-base` nor
 `--install-base`, and must forward them untouched when the user passes them.
 * Must default `--mixin` to `rel-with-deb-info` for the `build` verb, unless the user asks for a mixin.
-* Must fill and pass to colcon correct `-fdebug-prefix-map` inside `-DCMAKE_CXX_FLAGS`.
 * After calling `colcon`, `colocon` has to find all `compile_commands.json` and join them to a unique
 `compile_commands.json`.
