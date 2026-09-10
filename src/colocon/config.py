@@ -29,7 +29,9 @@ def default_config_path() -> Path:
 def load_config(path: str | Path | None = None) -> Config:
     """Load the configuration from `path`, falling back to the user's file.
 
-    A missing or empty file yields a `Config` with its default values.
+    A missing or empty file yields a `Config` with its default values. A search
+    path starting with ``~`` is expanded, as a configuration file is written by
+    hand and never goes through a shell.
     """
     config_path = default_config_path() if path is None else Path(path)
     if not config_path.is_file():
@@ -37,6 +39,6 @@ def load_config(path: str | Path | None = None) -> Config:
 
     content = yaml.safe_load(config_path.read_text()) or {}
     return Config(
-        search_paths=tuple(Path(search_path) for search_path in content.get('search-paths') or ()),
+        search_paths=tuple(Path(search_path).expanduser() for search_path in content.get('search-paths') or ()),
         compile_commands=bool(content.get('compile_commands', False)),
     )

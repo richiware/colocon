@@ -59,7 +59,7 @@ pipx install git+https://github.com/richiware/colocon.git
 
 ```yaml
 search-paths:
-  - /home/developer/repos
+  - ~/repos
   - /opt/vendor/repos
 compile_commands: true
 ```
@@ -69,9 +69,10 @@ compile_commands: true
 | `search-paths` | list of paths | empty | Where to look for dependency repositories, in order. |
 | `compile_commands` | boolean | `false` | Join every `compile_commands.json` after a successful build. |
 
-Paths must be **absolute**: `~` and `$HOME` are not expanded, and a path containing them silently matches
-nothing. A missing or empty configuration file is fine — `colocon` then reports every dependency it could not
-locate and builds the project on its own.
+A search path may start with `~`, which is expanded to your home directory. Environment variables are **not**
+expanded, so a path such as `$HOME/repos` silently matches nothing — write `~/repos` instead. A missing or empty
+configuration file is fine: `colocon` then reports every dependency it could not locate and builds the project
+on its own.
 
 ## Usage
 

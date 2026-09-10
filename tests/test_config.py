@@ -36,6 +36,28 @@ def test_compile_commands_defaults_to_false(tmp_path):
     assert load_config(config_path).compile_commands is False
 
 
+def test_tilde_is_expanded(tmp_path):
+    config_path = tmp_path / 'colocon.yaml'
+    config_path.write_text('search-paths: ["~/repos"]\n')
+
+    assert load_config(config_path).search_paths == (Path.home() / 'repos',)
+
+
+def test_absolute_paths_are_kept(tmp_path):
+    config_path = tmp_path / 'colocon.yaml'
+    config_path.write_text('search-paths: ["/opt/vendor/repos"]\n')
+
+    assert load_config(config_path).search_paths == (Path('/opt/vendor/repos'),)
+
+
+def test_environment_variables_are_not_expanded(tmp_path):
+    # Only `~` is expanded; a `$VAR` reaches the lookup as written.
+    config_path = tmp_path / 'colocon.yaml'
+    config_path.write_text('search-paths: ["$HOME/repos"]\n')
+
+    assert load_config(config_path).search_paths == (Path('$HOME/repos'),)
+
+
 def test_search_paths_default_to_empty(tmp_path):
     config_path = tmp_path / 'colocon.yaml'
     config_path.write_text('compile_commands: true\n')
