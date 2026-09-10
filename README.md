@@ -133,10 +133,23 @@ The project's own name and the dependencies it wants built alongside it:
 name: nebula
 dependencies:
   - quasar
+build-dependencies:
   - stardust
 ```
 
-`colocon` reads only `name` and `dependencies`; the rest of the file belongs to `colcon`.
+`colocon` reads the project's `name` and every dependency key that
+[`colcon.pkg`](https://colcon.readthedocs.io/en/released/user/configuration.html#colcon-pkg-files) defines:
+
+| Key | Meaning |
+| --- | --- |
+| `dependencies` | Needed for every phase. |
+| `build-dependencies` | Needed to build. |
+| `run-dependencies` | Needed to run. |
+| `test-dependencies` | Needed to test. |
+
+Whichever phase asks for a dependency, its worktree has to be in the workspace, so `colocon` takes the union of
+all four keys — a package named by several of them is passed once. Every other key, such as `type` or `hooks`,
+belongs to `colcon` and is left untouched.
 
 ### `<project>.repos`
 
@@ -170,7 +183,7 @@ repositories:
 
 ## How dependencies are resolved
 
-1. Read `name` and `dependencies` from `colcon.pkg`.
+1. Read `name` and the dependency keys from `colcon.pkg`.
 2. Read the `repositories` of `<name>.repos`.
 3. Join the two: a repository is selected when it is a declared dependency. With `--all`, every repository is
    selected except the project itself.
@@ -187,8 +200,8 @@ A dependency whose worktree cannot be found is reported on stderr and skipped �
 dependency graph — that is `colcon`'s job.
 
 The files above describe such a chain: `nebula` depends on `quasar`, and `quasar` in turn depends on `pulsar`.
-Because only `quasar` and `stardust` are declared in `nebula`'s `colcon.pkg`, `pulsar` gets no path even though
-the *repos* file pins a version for it:
+Because `nebula`'s `colcon.pkg` declares only `quasar` and `stardust`, `pulsar` gets no path even though the
+*repos* file pins a version for it:
 
 ```console
 $ colocon build

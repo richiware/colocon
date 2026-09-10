@@ -21,12 +21,22 @@ import yaml
 #: declared version that has no worktree checked out.
 DEFAULT_VERSION = 'master'
 
+#: Keys of ``colcon.pkg`` listing dependencies, in the order they are read.
+#: `colcon` lets a package narrow a dependency to one phase; whichever phase
+#: needs it, its worktree has to be part of the workspace, so `colocon` takes
+#: the union of them all.
+DEPENDENCY_KEYS = ('dependencies', 'build-dependencies', 'run-dependencies', 'test-dependencies')
+
 PathLike = str | Path
 
 
 @dataclasses.dataclass(frozen=True)
 class ProjectInfo:
-    """The contents of ``colcon.pkg`` that `colocon` cares about."""
+    """The contents of ``colcon.pkg`` that `colocon` cares about.
+
+    `dependencies` gathers every dependency key of the file, whatever phase it
+    was declared for, with duplicates removed.
+    """
 
     name: str
     dependencies: tuple[str, ...] = ()
@@ -55,6 +65,20 @@ class ResolvedPaths:
     missing: tuple[str, ...] = ()
 
 
+def read_dependencies(content: dict) -> tuple[str, ...]:
+    """Gather every dependency declared by a ``colcon.pkg``.
+
+    The keys of `DEPENDENCY_KEYS` are read in order and their contents joined,
+    keeping the first mention of a package that several phases ask for.
+    """
+    dependencies = []
+    for key in DEPENDENCY_KEYS:
+        for dependency in content.get(key) or ():
+            if dependency not in dependencies:
+                dependencies.append(dependency)
+    return tuple(dependencies)
+
+
 def read_project_info(project_dir: PathLike) -> ProjectInfo | None:
     """Read ``colcon.pkg`` from `project_dir`.
 
@@ -69,7 +93,7 @@ def read_project_info(project_dir: PathLike) -> ProjectInfo | None:
     if not name:
         return None
 
-    return ProjectInfo(name=name, dependencies=tuple(content.get('dependencies') or ()))
+    return ProjectInfo(name=name, dependencies=read_dependencies(content))
 
 
 def read_repositories(project_dir: PathLike, project_name: str) -> dict[str, Repository]:

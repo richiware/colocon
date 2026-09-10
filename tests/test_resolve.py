@@ -3,8 +3,11 @@
 
 import shutil
 
+import pytest
+
 from colocon.resolve import (
     DEFAULT_VERSION,
+    DEPENDENCY_KEYS,
     ProjectInfo,
     Repository,
     find_worktree,
@@ -36,6 +39,64 @@ class TestReadProjectInfo:
     def test_with_dependencies(self, write_pkg):
         info = read_project_info(write_pkg(name='project1', dependencies=['project2', 'project3']))
         assert info == ProjectInfo(name='project1', dependencies=('project2', 'project3'))
+
+
+class TestDependencyKeys:
+    """`colcon.pkg` may declare dependencies for one phase only."""
+
+    def test_every_key_is_supported(self):
+        assert DEPENDENCY_KEYS == (
+            'dependencies', 'build-dependencies', 'run-dependencies', 'test-dependencies')
+
+    @pytest.mark.parametrize('key', DEPENDENCY_KEYS)
+    def test_key_is_read_on_its_own(self, key, write_pkg):
+        info = read_project_info(write_pkg(**{'name': 'project1', key: ['project2']}))
+        assert info.dependencies == ('project2',)
+
+    def test_keys_are_joined(self, write_pkg):
+        project_dir = write_pkg(**{
+            'name': 'project1',
+            'dependencies': ['project2'],
+            'build-dependencies': ['project3'],
+            'run-dependencies': ['project4'],
+            'test-dependencies': ['project5'],
+        })
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project2', 'project3', 'project4', 'project5')
+
+    def test_a_dependency_of_several_phases_is_kept_once(self, write_pkg):
+        project_dir = write_pkg(**{
+            'name': 'project1',
+            'dependencies': ['project2'],
+            'build-dependencies': ['project2', 'project3'],
+            'test-dependencies': ['project3'],
+        })
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project2', 'project3')
+
+    def test_an_empty_key_is_ignored(self, project_dir):
+        (project_dir / 'colcon.pkg').write_text(
+                'name: project1\ndependencies:\n  - project2\ntest-dependencies:\n')
+
+        assert read_project_info(project_dir).dependencies == ('project2',)
+
+    def test_without_any_key(self, write_pkg):
+        assert read_project_info(write_pkg(name='project1')).dependencies == ()
+
+    def test_other_keys_are_left_alone(self, write_pkg):
+        # `type` and `hooks` are colcon's business, not colocon's.
+        project_dir = write_pkg(**{
+            'name': 'project1',
+            'type': 'cmake',
+            'hooks': ['share/hook.sh'],
+            'test-dependencies': ['project2'],
+        })
+
+        assert read_project_info(project_dir).dependencies == ('project2',)
 
 
 class TestReadRepositories:

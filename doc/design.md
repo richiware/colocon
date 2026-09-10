@@ -2,7 +2,9 @@
 
 * Must accept any `colcon`'s argument and pass it when calling `colcon`.
 * `colocon` will be called from the project's root directory or the user will specify it using `--project-dir`.
-`colocon` must obtain the project's name in that directory using the `colcon.pkg`.
+`colocon` must obtain the project's name in that directory using the `colcon.pkg`, and its dependencies from
+every dependency key that file supports: `dependencies`, `build-dependencies`, `run-dependencies` and
+`test-dependencies`.
 Then `colocon` must search the file `${project_name}.repos` and obtain the dependencies and versions.
 * Must leave the build and install directories to `colcon`. `colocon` must never add `--build-base` nor
 `--install-base`, and must forward them untouched when the user passes them.
