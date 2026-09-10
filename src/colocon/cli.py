@@ -22,10 +22,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
             '-p', '--project-dir', default='.',
             help='Root directory of the main project, where its CMakeList.txt will be found.')
-    parser.add_argument(
-            '-a', '--all', action='store_true',
-            help='Instead of inner-join between dependencies of "colcon.pkg" and "{project_name}.repos",\
-             a left-join will be done and use all dependencies')
     parser.add_argument('rest', nargs=argparse.REMAINDER)
     return parser.parse_args(argv)
 
@@ -54,8 +50,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     repositories = read_repositories(options.project_dir, project_info.name)
-    resolved = resolve_paths(
-            options.project_dir, project_info, repositories, config.search_paths, include_all=options.all)
+    resolved = resolve_paths(options.project_dir, project_info, repositories, config.search_paths)
     for name in resolved.missing:
         print('Cannot find path for ' + name, file=sys.stderr)
 

@@ -87,15 +87,13 @@ colocon test
 
 ### Options
 
-`colocon` owns two arguments; everything else is forwarded to `colcon` untouched.
+`colocon` owns a single argument; everything else is forwarded to `colcon` untouched.
 
 | Option | Meaning |
 | --- | --- |
 | `-p`, `--project-dir DIR` | Root of the project to build. Defaults to the working directory. |
-| `-a`, `--all` | Use every repository listed in the *repos* file, not only the declared dependencies. |
 
-Both must come **before** the verb. Everything from the verb onwards belongs to `colcon`, so `colocon build
---all` forwards `--all` to `colcon` rather than acting on it.
+It must come **before** the verb: everything from the verb onwards belongs to `colcon`.
 
 ### What `colocon` adds
 
@@ -117,7 +115,7 @@ neither `--build-base` nor `--install-base`, and forwards both untouched when yo
 | --- | --- |
 | `0` | Success. |
 | `1` | `colcon.pkg` could not be read, or no verb was given. |
-| `2` | An argument `colocon` needs to read is malformed, such as a `--build-base` with no value. |
+| `2` | An argument was rejected: unknown to `colocon`, or a `--build-base` with no value. |
 | `130` | Interrupted with <kbd>Ctrl</kbd>+<kbd>C</kbd>. |
 | *other* | Whatever `colcon` returned, forwarded unchanged. |
 
@@ -185,8 +183,8 @@ repositories:
 
 1. Read `name` and the dependency keys from `colcon.pkg`.
 2. Read the `repositories` of `<name>.repos`.
-3. Join the two: a repository is selected when it is a declared dependency. With `--all`, every repository is
-   selected except the project itself.
+3. Join the two: a repository is selected when the project declares it as a dependency, so a *repos* file may
+   pin versions for more repositories than a given project needs.
 4. For each selected repository, look for the first of these that exists, across the search paths in order:
    `<search-path>/<name>/<version>`, then `<search-path>/<name>/master`.
 5. Pass what was found to `colcon`, together with the project directory.
@@ -209,11 +207,20 @@ colcon build --paths ~/repos/quasar/2.3.x ~/repos/nebula/master \
              --base-paths ~/repos/stardust/1.0 --mixin rel-with-deb-info
 ```
 
-To cover the whole chain, either declare every level in `colcon.pkg`, or keep the *repos* file as the single
-source of truth and use `--all`:
+To cover the whole chain, declare every level in `colcon.pkg`. The phase keys keep that readable, since a level
+needed only to build or only to test can be declared as such:
+
+```yaml
+name: nebula
+dependencies:
+  - quasar
+  - pulsar
+build-dependencies:
+  - stardust
+```
 
 ```console
-$ colocon --all build
+$ colocon build
 colcon build --paths ~/repos/quasar/2.3.x ~/repos/pulsar/master ~/repos/nebula/master \
              --base-paths ~/repos/stardust/1.0 --mixin rel-with-deb-info
 ```

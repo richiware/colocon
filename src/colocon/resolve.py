@@ -124,20 +124,15 @@ def read_repositories(project_dir: PathLike, project_name: str) -> dict[str, Rep
 def select_dependencies(
     repositories: dict[str, Repository],
     dependencies: Iterable[str],
-    project_name: str,
-    include_all: bool = False,
 ) -> dict[str, Repository]:
     """Join the *repos* entries with the ``colcon.pkg`` dependencies.
 
-    By default this is an inner join. With `include_all` every repository is
-    kept except the project itself, which `colocon` adds separately.
+    A repository is selected when the project declares it as a dependency, so
+    a *repos* file may pin versions for more repositories than a given project
+    needs.
     """
     wanted = set(dependencies or ())
-    return {
-        name: repository
-        for name, repository in repositories.items()
-        if name in wanted or (include_all and name != project_name)
-    }
+    return {name: repository for name, repository in repositories.items() if name in wanted}
 
 
 def find_worktree(repository: Repository, search_paths: Iterable[PathLike]) -> Path | None:
@@ -162,7 +157,6 @@ def resolve_paths(
     project_info: ProjectInfo,
     repositories: dict[str, Repository],
     search_paths: Iterable[PathLike],
-    include_all: bool = False,
 ) -> ResolvedPaths:
     """Resolve the project and its dependencies to directories."""
     search_paths = tuple(search_paths)
@@ -170,7 +164,7 @@ def resolve_paths(
     recursive_paths = []
     missing = []
 
-    selected = select_dependencies(repositories, project_info.dependencies, project_info.name, include_all)
+    selected = select_dependencies(repositories, project_info.dependencies)
     for name, repository in selected.items():
         worktree = find_worktree(repository, search_paths)
         if worktree is None:

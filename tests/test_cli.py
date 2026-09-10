@@ -123,18 +123,6 @@ class TestDependencyChain:
         assert str(chain.project2) in argv
         assert str(chain.project3) not in argv
 
-    def test_all_flag_covers_the_whole_chain(
-            self, config, colcon, chain, search_path, write_pkg, write_repos):
-        config(search_paths=(search_path,))
-        write_repos('project1', self.REPOS)
-        project_dir = write_pkg(name='project1')
-
-        assert cli.main(['-a', '-p', str(project_dir), 'build']) == 0
-
-        argv = colcon.calls[0]
-        assert str(chain.project2) in argv
-        assert str(chain.project3) in argv
-
     def test_recursive_level_uses_base_paths(
             self, config, colcon, chain, search_path, write_pkg, write_repos):
         config(search_paths=(search_path,))
@@ -197,13 +185,9 @@ class TestParseArgs:
     def test_defaults(self):
         options = cli.parse_args([])
         assert options.project_dir == '.'
-        assert options.all is False
         assert options.rest == []
 
     def test_colcon_arguments_are_kept_apart(self):
         options = cli.parse_args(['-p', 'dir', 'build', '--mixin', 'debug'])
         assert options.project_dir == 'dir'
         assert options.rest == ['build', '--mixin', 'debug']
-
-    def test_all_flag(self):
-        assert cli.parse_args(['-a', 'build']).all is True

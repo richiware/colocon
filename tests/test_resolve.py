@@ -145,23 +145,24 @@ class TestSelectDependencies:
     }
 
     def test_inner_join(self):
-        selected = select_dependencies(self.REPOSITORIES, ['project2'], 'project1')
+        selected = select_dependencies(self.REPOSITORIES, ['project2'])
         assert list(selected) == ['project2']
 
     def test_dependency_absent_from_repos_is_ignored(self):
-        selected = select_dependencies(self.REPOSITORIES, ['project2', 'unlisted'], 'project1')
+        selected = select_dependencies(self.REPOSITORIES, ['project2', 'unlisted'])
         assert list(selected) == ['project2']
 
+    def test_repository_absent_from_the_dependencies_is_ignored(self):
+        # A repos file may pin more repositories than this project needs.
+        selected = select_dependencies(self.REPOSITORIES, ['project2'])
+        assert 'project3' not in selected
+
+    def test_the_projects_own_entry_is_not_selected(self):
+        selected = select_dependencies(self.REPOSITORIES, ['project2'])
+        assert 'project1' not in selected
+
     def test_without_dependencies(self):
-        assert select_dependencies(self.REPOSITORIES, (), 'project1') == {}
-
-    def test_include_all_excludes_the_project_itself(self):
-        selected = select_dependencies(self.REPOSITORIES, (), 'project1', include_all=True)
-        assert list(selected) == ['project2', 'project3']
-
-    def test_include_all_keeps_declared_dependencies(self):
-        selected = select_dependencies(self.REPOSITORIES, ['project2'], 'project1', include_all=True)
-        assert list(selected) == ['project2', 'project3']
+        assert select_dependencies(self.REPOSITORIES, ()) == {}
 
 
 class TestFindWorktree:
@@ -232,12 +233,6 @@ class TestResolvePaths:
 
         assert resolved.paths == (str(project_dir.resolve()),)
 
-    def test_include_all_uses_every_repository(self, project_dir, search_path):
-        info = ProjectInfo(name='project1', dependencies=())
-        resolved = resolve_paths(project_dir, info, self.repositories(), [search_path], include_all=True)
-
-        assert resolved.paths == (str(search_path / 'project2' / '2.x'), str(project_dir))
-        assert resolved.missing == (UNKNOWN_PROJECT,)
 
 
 class TestDependencyChain:
@@ -279,13 +274,6 @@ class TestDependencyChain:
         assert str(chain.project3) not in resolved.paths
         # It is not reported as missing either: it was never looked for.
         assert resolved.missing == ()
-
-    def test_include_all_covers_the_whole_chain(self, chain, project_dir, search_path):
-        # Which is how a deep chain is built without listing every level.
-        info = ProjectInfo(name='project1', dependencies=())
-        resolved = resolve_paths(project_dir, info, self.REPOSITORIES, [search_path], include_all=True)
-
-        assert resolved.paths == (str(chain.project2), str(chain.project3), str(project_dir))
 
     def test_a_middle_level_can_be_recursive(self, chain, project_dir, search_path):
         repositories = dict(self.REPOSITORIES, project2=Repository(name='project2', version='2.x', recursive=True))
