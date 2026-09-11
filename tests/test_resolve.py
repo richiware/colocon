@@ -17,6 +17,8 @@ from colocon.resolve import (
     declared_cmake_dependencies,
     declared_dependencies,
     declared_settings_dependencies,
+    dependency_directory,
+    expand_dependencies,
     find_package_dirs,
     find_worktree,
     read_project_info,
@@ -531,9 +533,9 @@ class TestDependencyChain:
         assert resolved.paths[:2] == (str(chain.project2), str(chain.project3))
         assert not any(path.endswith(DEFAULT_VERSION) for path in resolved.paths)
 
-    def test_indirect_level_is_left_to_colcon(self, chain, project_dir, search_path):
-        # project1 declares only project2; project3 is project2's own
-        # dependency, and `colocon` does not read project2's `colcon.pkg`.
+    def test_resolving_alone_does_not_follow_a_chain(self, chain, project_dir, search_path):
+        # `resolve_paths` resolves what it is given; following a chain is the
+        # business of `expand_dependencies`, which runs before it.
         info = ProjectInfo(name='project1', dependencies=('project2',), package_dirs=(project_dir,))
         resolved = resolve_paths(info, self.REPOSITORIES, [search_path])
 
@@ -1011,3 +1013,167 @@ class TestProjectSettingsInAProject:
 
         assert info.dependencies == ('project2',)
         assert info.package_dirs == (project_dir.resolve(),)
+
+
+class TestDependencyDirectory:
+
+    def repositories(self):
+        return {'project2': Repository(name='project2', version='2.x')}
+
+    def test_a_resolved_dependency(self, search_path):
+        assert dependency_directory('project2', self.repositories(), [search_path]) == (
+            search_path / 'project2' / '2.x')
+
+    def test_a_dependency_placed_inside_another_repository(self, search_path):
+        (search_path / 'project2' / '2.x' / 'core').mkdir()
+        locations = {'project2_core': Location(project='project2', path='core')}
+
+        assert dependency_directory('project2_core', self.repositories(), [search_path], locations) == (
+            search_path / 'project2' / '2.x' / 'core')
+
+    def test_a_dependency_absent_from_the_repos_file(self, search_path):
+        assert dependency_directory(UNKNOWN_PROJECT, self.repositories(), [search_path]) is None
+
+    def test_a_dependency_without_a_worktree(self, search_path):
+        repositories = {'no_worktree': Repository(name='no_worktree', version='master')}
+        assert dependency_directory('no_worktree', repositories, [search_path]) is None
+
+    def test_a_directory_that_is_not_there(self, search_path):
+        locations = {'project2_core': Location(project='project2', path='absent')}
+        assert dependency_directory('project2_core', self.repositories(), [search_path], locations) is None
+
+
+class TestExpandDependencies:
+    """Following the dependencies of the dependencies."""
+
+    REPOSITORIES = {
+        'project2': Repository(name='project2', version='2.x'),
+        'project3': Repository(name='project3', version='3.x'),
+        'project4': Repository(name='project4', version='4.x'),
+    }
+
+    def declare(self, package_dir, name, *dependencies):
+        """Give a worktree a `colcon.pkg` of its own."""
+        package_dir.mkdir(parents=True, exist_ok=True)
+        content = {'name': name}
+        if dependencies:
+            content['dependencies'] = list(dependencies)
+        (package_dir / 'colcon.pkg').write_text(yaml.dump(content))
+        return package_dir
+
+    def info(self, project_dir, *dependencies):
+        return ProjectInfo(
+                name='project1',
+                dependencies=dependencies,
+                package_dirs=(project_dir,),
+                origins={
+                    dependency: Origin(file=project_dir / 'colcon.pkg', key='dependencies')
+                    for dependency in dependencies
+                })
+
+    def expand(self, project_info, search_path, locations=None):
+        return expand_dependencies(project_info, self.REPOSITORIES, [search_path], locations)
+
+    def test_a_dependency_of_a_dependency_is_added(self, project_dir, search_path):
+        self.declare(search_path / 'project2' / '2.x', 'project2', 'project3')
+
+        expanded = self.expand(self.info(project_dir, 'project2'), search_path)
+
+        assert expanded.dependencies == ('project2', 'project3')
+
+    def test_a_chain_of_three(self, project_dir, search_path):
+        self.declare(search_path / 'project2' / '2.x', 'project2', 'project3')
+        self.declare(search_path / 'project3' / '3.x', 'project3', 'project4')
+
+        expanded = self.expand(self.info(project_dir, 'project2'), search_path)
+
+        assert expanded.dependencies == ('project2', 'project3', 'project4')
+
+    def test_the_project_own_dependencies_come_first(self, project_dir, search_path):
+        self.declare(search_path / 'project2' / '2.x', 'project2', 'project4')
+
+        expanded = self.expand(self.info(project_dir, 'project2', 'project3'), search_path)
+
+        assert expanded.dependencies == ('project2', 'project3', 'project4')
+
+    def test_a_chain_leading_back_on_itself_stops(self, project_dir, search_path):
+        self.declare(search_path / 'project2' / '2.x', 'project2', 'project3')
+        self.declare(search_path / 'project3' / '3.x', 'project3', 'project2')
+
+        expanded = self.expand(self.info(project_dir, 'project2'), search_path)
+
+        assert expanded.dependencies == ('project2', 'project3')
+
+    def test_a_dependency_depending_on_itself_stops(self, project_dir, search_path):
+        self.declare(search_path / 'project2' / '2.x', 'project2', 'project2')
+
+        expanded = self.expand(self.info(project_dir, 'project2'), search_path)
+
+        assert expanded.dependencies == ('project2',)
+
+    def test_a_dependency_found_twice_is_kept_once(self, project_dir, search_path):
+        self.declare(search_path / 'project2' / '2.x', 'project2', 'project4')
+        self.declare(search_path / 'project3' / '3.x', 'project3', 'project4')
+
+        expanded = self.expand(self.info(project_dir, 'project2', 'project3'), search_path)
+
+        assert expanded.dependencies == ('project2', 'project3', 'project4')
+
+    def test_a_dependency_that_resolves_to_nothing_is_not_followed(self, project_dir, search_path):
+        expanded = self.expand(self.info(project_dir, UNKNOWN_PROJECT), search_path)
+
+        assert expanded.dependencies == (UNKNOWN_PROJECT,)
+
+    def test_a_worktree_holding_no_package_is_not_followed(self, project_dir, search_path):
+        # project2 has a worktree but nothing describing a package in it.
+        expanded = self.expand(self.info(project_dir, 'project2'), search_path)
+
+        assert expanded.dependencies == ('project2',)
+
+    def test_the_repos_file_of_the_project_decides(self, project_dir, search_path):
+        # project2 wants project9, which the project's repos file says nothing
+        # about, so it is recorded but resolves to nothing.
+        self.declare(search_path / 'project2' / '2.x', 'project2', UNKNOWN_PROJECT)
+
+        expanded = self.expand(self.info(project_dir, 'project2'), search_path)
+
+        assert expanded.dependencies == ('project2', UNKNOWN_PROJECT)
+        assert dependency_directory(UNKNOWN_PROJECT, self.REPOSITORIES, [search_path]) is None
+
+    def test_the_origin_points_into_the_dependency(self, project_dir, search_path):
+        worktree = self.declare(search_path / 'project2' / '2.x', 'project2', 'project3')
+
+        expanded = self.expand(self.info(project_dir, 'project2'), search_path)
+
+        assert expanded.origins['project3'] == Origin(
+                file=worktree / 'colcon.pkg', key='dependencies')
+
+    def test_a_dependency_declared_by_cmake_is_followed(self, project_dir, search_path):
+        worktree = search_path / 'project2' / '2.x'
+        (worktree / 'CMakeLists.txt').write_text('project(project2)\nfind_package(project3)\n')
+
+        expanded = self.expand(self.info(project_dir, 'project2'), search_path)
+
+        assert expanded.dependencies == ('project2', 'project3')
+        assert expanded.origins['project3'] == Origin(file=worktree / 'CMakeLists.txt', line=2)
+
+    def test_a_dependency_inside_another_repository_is_followed(self, project_dir, search_path):
+        core = self.declare(search_path / 'project2' / '2.x' / 'core', 'project2_core', 'project3')
+        locations = {'project2_core': Location(project='project2', path='core')}
+
+        expanded = self.expand(self.info(project_dir, 'project2_core'), search_path, locations)
+
+        assert expanded.dependencies == ('project2_core', 'project3')
+        assert expanded.origins['project3'].file == core / 'colcon.pkg'
+
+    def test_the_project_is_otherwise_untouched(self, project_dir, search_path):
+        self.declare(search_path / 'project2' / '2.x', 'project2', 'project3')
+        original = self.info(project_dir, 'project2')
+
+        expanded = self.expand(original, search_path)
+
+        assert expanded.name == original.name
+        assert expanded.package_dirs == original.package_dirs
+
+    def test_without_dependencies(self, project_dir, search_path):
+        assert self.expand(self.info(project_dir), search_path).dependencies == ()

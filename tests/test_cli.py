@@ -123,10 +123,26 @@ class TestDependencyChain:
         assert argv[argv.index('--paths') + 1:argv.index('--paths') + 4] == [
             str(chain.project2), str(chain.project3), str(project_dir)]
 
-    def test_indirect_level_is_left_to_colcon(
+    def test_an_indirect_level_is_followed(
             self, config, colcon, chain, search_path, write_pkg, write_repos):
+        # project1 declares only project2, and project3 is project2's own
+        # dependency: following it is what puts project3 on the command line.
         config(search_paths=(search_path,))
         write_repos('project1', self.REPOS)
+        project_dir = write_pkg(name='project1', dependencies=['project2'])
+
+        assert cli.main(['-p', str(project_dir), 'build']) == 0
+
+        argv = colcon.calls[0]
+        assert str(chain.project2) in argv
+        assert str(chain.project3) in argv
+
+    def test_an_indirect_level_absent_from_the_repos_file_is_not_reached(
+            self, config, colcon, chain, search_path, write_pkg, write_repos):
+        # The project's own repos file decides the versions, so a dependency it
+        # says nothing about resolves to nothing.
+        config(search_paths=(search_path,))
+        write_repos('project1', {'project2': {'version': '2.x'}})
         project_dir = write_pkg(name='project1', dependencies=['project2'])
 
         assert cli.main(['-p', str(project_dir), 'build']) == 0

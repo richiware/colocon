@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 
 import yaml
@@ -447,6 +447,74 @@ def find_worktree(repository: Repository, search_paths: Iterable[PathLike]) -> P
             if worktree.is_dir():
                 return worktree
     return None
+
+
+def dependency_directory(
+    dependency: str,
+    repositories: Mapping[str, Repository],
+    search_paths: Sequence[PathLike],
+    locations: Mapping[str, Location] | None = None,
+) -> Path | None:
+    """The directory `dependency` resolves to, or ``None`` when it has none.
+
+    The happy path of `resolve_paths`, for a caller with nothing to say about
+    why a dependency did not resolve.
+    """
+    repository_name, path = dependency_location(dependency, locations)
+    repository = repositories.get(repository_name)
+    if repository is None:
+        return None
+
+    worktree = find_worktree(repository, search_paths)
+    if worktree is None:
+        return None
+
+    directory = worktree / path if path else worktree
+    return directory if directory.is_dir() else None
+
+
+def expand_dependencies(
+    project_info: ProjectInfo,
+    repositories: Mapping[str, Repository],
+    search_paths: Sequence[PathLike],
+    locations: Mapping[str, Location] | None = None,
+) -> ProjectInfo:
+    """Follow the dependencies of the dependencies, to the end of the chain.
+
+    A dependency that resolves to a worktree is described the same way the
+    project is, and whatever it declares becomes a dependency of the project
+    too — a project therefore needs to name only what it uses directly, and
+    `colcon` is handed the whole chain.
+
+    Versions stay the business of the project's own *repos* file, the one a
+    developer controls, rather than of whatever each dependency pins for
+    itself. A dependency already found is never followed a second time, which
+    is what keeps a chain that leads back on itself from going round.
+    """
+    search_paths = tuple(search_paths)
+    origins = dict(project_info.origins)
+    dependencies = list(project_info.dependencies)
+
+    following = list(project_info.dependencies)
+    while following:
+        further = []
+        for dependency in following:
+            directory = dependency_directory(dependency, repositories, search_paths, locations)
+            if directory is None:
+                continue
+            declared = read_project_info(directory)
+            if declared is None:
+                continue
+            for found, origin in declared.origins.items():
+                if found in origins or found in dependencies:
+                    continue
+                origins[found] = origin
+                dependencies.append(found)
+                further.append(found)
+        following = further
+
+    return dataclasses.replace(
+            project_info, dependencies=tuple(dependencies), origins=origins)
 
 
 def resolve_paths(

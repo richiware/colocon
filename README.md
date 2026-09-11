@@ -31,7 +31,7 @@ or tag it holds:
 ```
 ~/repos/                     <- a search path
 ├── nebula/
-│   ├── master
+│   ├── main
 │   └── feature/warp-drive
 ├── quasar/
 │   ├── master
@@ -407,36 +407,38 @@ A dependency whose worktree cannot be found is reported on stderr and skipped �
 
 ### Chains of dependencies
 
-`colocon` reads the `colcon.pkg` of the project it was run from, and of no other. It does not walk the
-dependency graph — that is `colcon`'s job.
+A dependency that resolves to a worktree is read the same way the project is, and whatever it declares becomes a
+dependency of the project too. A project therefore names only what it uses directly, and `colcon` is handed the
+whole chain.
 
-The files above describe such a chain: `nebula` depends on `quasar`, and `quasar` in turn depends on `pulsar`.
-Because `nebula`'s `colcon.pkg` declares only `quasar` and `stardust`, `pulsar` gets no path even though the
-*repos* file pins a version for it:
-
-```console
-$ colocon build
-colcon build --paths ~/repos/quasar/2.3.x ~/repos/nebula/master \
-             --base-paths ~/repos/stardust/1.0 --mixin rel-with-deb-info
-```
-
-To cover the whole chain, declare every level in `colcon.pkg`. The phase keys keep that readable, since a level
-needed only to build or only to test can be declared as such:
+Take `nebula` depending on `quasar`, with `quasar` depending on `pulsar` in turn. Declaring `quasar` is enough:
 
 ```yaml
 name: nebula
 dependencies:
   - quasar
-  - pulsar
 build-dependencies:
   - stardust
 ```
 
 ```console
 $ colocon build
-colcon build --paths ~/repos/quasar/2.3.x ~/repos/pulsar/master ~/repos/nebula/master \
+colcon build --paths ~/repos/quasar/2.3.x ~/repos/pulsar/master ~/repos/nebula/main \
              --base-paths ~/repos/stardust/1.0 --mixin rel-with-deb-info
 ```
+
+Three rules keep that predictable:
+
+- **The project's own *repos* file decides every version**, the one a developer controls, rather than whatever
+  each dependency pins for itself. A dependency that file says nothing about resolves to nothing and is simply
+  reported by [`colocon -d`](#diagnosing-a-project) — which is also what stops the chain at the edge of the
+  workspace.
+- **A dependency already found is never followed twice**, so a chain leading back on itself goes round once and
+  stops.
+- **Only what resolves is followed.** A dependency with no worktree, or a worktree describing no package, is a
+  leaf.
+
+The cost is a handful of files read per dependency, so there is nothing to turn off.
 
 ## Compilation database
 

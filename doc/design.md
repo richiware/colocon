@@ -22,6 +22,10 @@ directory is the dependency's own name.
 dependencies and the directory each one resolved to, and then carrying on. Each dependency must also show where
 it was first declared: the `colcon.pkg` file and the key declaring it, or the `CMakeLists.txt` file and the line
 of the `find_package` command.
+* Must follow the dependencies of its dependencies to the end of the chain: a dependency resolving to a
+worktree must be read as the project is, and whatever it declares becomes a dependency too. The project's own
+*repos* file must decide every version, and a dependency already found must never be followed again, so that a
+chain leading back on itself terminates.
 * Must leave the build and install directories to `colcon`. `colocon` must never add `--build-base` nor
 `--install-base`, and must forward them untouched when the user passes them.
 * Must default `--mixin` to `rel-with-deb-info` for the `build` verb, unless the user asks for a mixin.
