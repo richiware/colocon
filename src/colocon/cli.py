@@ -42,7 +42,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     :returns: The return code
     """
     options = parse_args(argv)
-    config = load_config()
+    try:
+        config = load_config()
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
 
     project_info = read_project_info(options.project_dir)
     if project_info is None:
@@ -51,7 +55,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     repositories = read_repositories(options.project_dir, project_info.name)
-    resolved = resolve_paths(project_info, repositories, config.search_paths)
+    resolved = resolve_paths(
+            project_info, repositories, config.search_paths, config.dependency_locations)
     for name in resolved.missing:
         print('Cannot find path for ' + name, file=sys.stderr)
 

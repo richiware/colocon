@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 import yaml
@@ -58,6 +58,19 @@ class ProjectInfo:
     name: str
     dependencies: tuple[str, ...] = ()
     package_dirs: tuple[Path, ...] = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class Location:
+    """Where a dependency lives, when it is no repository of its own.
+
+    `project` is the repository to look up in the *repos* file instead of the
+    dependency itself, and `path` the directory of its worktree holding the
+    dependency — empty for the worktree itself.
+    """
+
+    project: str
+    path: str = ''
 
 
 @dataclasses.dataclass(frozen=True)
@@ -250,17 +263,40 @@ def read_repositories(project_dir: PathLike, project_name: str) -> dict[str, Rep
     return repositories
 
 
+def requested_paths(
+    dependencies: Iterable[str],
+    locations: Mapping[str, Location] | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """Map every repository the dependencies need to the directories wanted.
+
+    A dependency is a repository of its own unless `locations` places it inside
+    another one, in which case that project is what the *repos* file is asked
+    about. The directories are relative to the worktree, and an empty one means
+    the worktree itself.
+    """
+    requested: dict[str, list[str]] = {}
+    for dependency in dependencies or ():
+        location = (locations or {}).get(dependency)
+        repository = location.project if location else dependency
+        path = location.path if location else ''
+        paths = requested.setdefault(repository, [])
+        if path not in paths:
+            paths.append(path)
+    return {repository: tuple(paths) for repository, paths in requested.items()}
+
+
 def select_dependencies(
     repositories: dict[str, Repository],
     dependencies: Iterable[str],
+    locations: Mapping[str, Location] | None = None,
 ) -> dict[str, Repository]:
     """Join the *repos* entries with the ``colcon.pkg`` dependencies.
 
-    A repository is selected when the project declares it as a dependency, so
-    a *repos* file may pin versions for more repositories than a given project
-    needs.
+    A repository is selected when the project declares it as a dependency, or
+    when `locations` places one of the dependencies inside it, so a *repos*
+    file may pin versions for more repositories than a given project needs.
     """
-    wanted = set(dependencies or ())
+    wanted = requested_paths(dependencies, locations)
     return {name: repository for name, repository in repositories.items() if name in wanted}
 
 
@@ -285,23 +321,34 @@ def resolve_paths(
     project_info: ProjectInfo,
     repositories: dict[str, Repository],
     search_paths: Iterable[PathLike],
+    locations: Mapping[str, Location] | None = None,
 ) -> ResolvedPaths:
-    """Resolve the project and its dependencies to directories."""
+    """Resolve the project and its dependencies to directories.
+
+    `locations` places a dependency inside another repository, so that only the
+    directory holding it is used rather than the whole worktree.
+    """
     search_paths = tuple(search_paths)
     paths = []
     recursive_paths = []
     missing = []
 
-    selected = select_dependencies(repositories, project_info.dependencies)
+    requested = requested_paths(project_info.dependencies, locations)
+    selected = select_dependencies(repositories, project_info.dependencies, locations)
     for name, repository in selected.items():
         worktree = find_worktree(repository, search_paths)
         if worktree is None:
             missing.append(name)
             continue
-        if repository.recursive:
-            recursive_paths.append(str(worktree))
-        else:
-            paths.append(str(worktree))
+        for path in requested[name]:
+            directory = worktree / path if path else worktree
+            if not directory.is_dir():
+                missing.append(name + '/' + path)
+                continue
+            if repository.recursive:
+                recursive_paths.append(str(directory))
+            else:
+                paths.append(str(directory))
 
     paths += [str(package_dir) for package_dir in project_info.package_dirs]
 

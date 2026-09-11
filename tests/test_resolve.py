@@ -9,6 +9,7 @@ import yaml
 from colocon.resolve import (
     DEFAULT_VERSION,
     DEPENDENCY_KEYS,
+    Location,
     ProjectInfo,
     Repository,
     cmake_dependencies,
@@ -16,6 +17,7 @@ from colocon.resolve import (
     find_worktree,
     read_project_info,
     read_repositories,
+    requested_paths,
     resolve_paths,
     select_dependencies,
 )
@@ -562,3 +564,159 @@ class TestDependencyChain:
         resolved = resolve_paths(info, self.REPOSITORIES, [search_path, other])
 
         assert resolved.paths == (str(chain.project2), str(moved), str(project_dir))
+
+
+class TestRequestedPaths:
+    """Which repository each dependency needs, and what is wanted from it."""
+
+    def test_an_unmapped_dependency_is_its_own_repository(self):
+        assert requested_paths(['project2']) == {'project2': ('',)}
+
+    def test_a_mapped_dependency_asks_for_its_project(self):
+        locations = {'project2_core': Location(project='project2', path='core')}
+        assert requested_paths(['project2_core'], locations) == {'project2': ('core',)}
+
+    def test_several_dependencies_of_one_project(self):
+        locations = {
+            'project2_core': Location(project='project2', path='core'),
+            'project2_utils': Location(project='project2', path='utils'),
+        }
+        assert requested_paths(['project2_core', 'project2_utils'], locations) == {
+            'project2': ('core', 'utils')}
+
+    def test_the_same_directory_asked_for_twice(self):
+        locations = {
+            'project2_core': Location(project='project2', path='core'),
+            'project2_alias': Location(project='project2', path='core'),
+        }
+        assert requested_paths(['project2_core', 'project2_alias'], locations) == {'project2': ('core',)}
+
+    def test_a_project_wanted_whole_and_in_part(self):
+        locations = {'project2_core': Location(project='project2', path='core')}
+        assert requested_paths(['project2', 'project2_core'], locations) == {'project2': ('', 'core')}
+
+    def test_mapped_and_unmapped_together(self):
+        locations = {'project2_core': Location(project='project2', path='core')}
+        assert requested_paths(['project2_core', 'project3'], locations) == {
+            'project2': ('core',), 'project3': ('',)}
+
+    def test_without_dependencies(self):
+        assert requested_paths([], {}) == {}
+
+
+class TestDependencyLocations:
+    """A dependency living in a subdirectory of another repository's worktree."""
+
+    def repositories(self, **overrides):
+        repositories = {'project2': Repository(name='project2', version='2.x')}
+        repositories.update(overrides)
+        return repositories
+
+    def info(self, project_dir, *dependencies):
+        return ProjectInfo(name='project1', dependencies=dependencies, package_dirs=(project_dir,))
+
+    def test_the_subdirectory_is_used(self, project_dir, search_path):
+        core = search_path / 'project2' / '2.x' / 'core'
+        core.mkdir()
+        locations = {'project2_core': Location(project='project2', path='core')}
+
+        resolved = resolve_paths(
+                self.info(project_dir, 'project2_core'), self.repositories(), [search_path], locations)
+
+        assert resolved.paths == (str(core), str(project_dir))
+        assert resolved.missing == ()
+
+    def test_the_project_is_looked_up_in_the_repos_file(self, project_dir, search_path):
+        # The dependency itself names no repository, so without the mapping
+        # nothing would be found at all.
+        core = search_path / 'project2' / '2.x' / 'core'
+        core.mkdir()
+        locations = {'project2_core': Location(project='project2', path='core')}
+
+        unmapped = resolve_paths(
+                self.info(project_dir, 'project2_core'), self.repositories(), [search_path])
+        mapped = resolve_paths(
+                self.info(project_dir, 'project2_core'), self.repositories(), [search_path], locations)
+
+        assert unmapped.paths == (str(project_dir),)
+        assert mapped.paths == (str(core), str(project_dir))
+
+    def test_the_version_of_the_project_is_honoured(self, project_dir, search_path):
+        # project2 also has a master worktree, which must not be taken.
+        (search_path / 'project2' / '2.x' / 'core').mkdir()
+        (search_path / 'project2' / 'master' / 'core').mkdir()
+        locations = {'project2_core': Location(project='project2', path='core')}
+
+        resolved = resolve_paths(
+                self.info(project_dir, 'project2_core'), self.repositories(), [search_path], locations)
+
+        assert resolved.paths[0] == str(search_path / 'project2' / '2.x' / 'core')
+
+    def test_several_dependencies_of_one_project(self, project_dir, search_path):
+        worktree = search_path / 'project2' / '2.x'
+        (worktree / 'core').mkdir()
+        (worktree / 'utils').mkdir()
+        locations = {
+            'project2_core': Location(project='project2', path='core'),
+            'project2_utils': Location(project='project2', path='utils'),
+        }
+
+        resolved = resolve_paths(
+                self.info(project_dir, 'project2_core', 'project2_utils'),
+                self.repositories(), [search_path], locations)
+
+        assert resolved.paths == (str(worktree / 'core'), str(worktree / 'utils'), str(project_dir))
+
+    def test_an_empty_path_uses_the_worktree(self, project_dir, search_path):
+        locations = {'project2_alias': Location(project='project2', path='')}
+
+        resolved = resolve_paths(
+                self.info(project_dir, 'project2_alias'), self.repositories(), [search_path], locations)
+
+        assert resolved.paths == (str(search_path / 'project2' / '2.x'), str(project_dir))
+
+    def test_a_recursive_project_still_uses_base_paths(self, project_dir, search_path):
+        core = search_path / 'project2' / '2.x' / 'core'
+        core.mkdir()
+        locations = {'project2_core': Location(project='project2', path='core')}
+        repositories = self.repositories(
+                project2=Repository(name='project2', version='2.x', recursive=True))
+
+        resolved = resolve_paths(
+                self.info(project_dir, 'project2_core'), repositories, [search_path], locations)
+
+        assert resolved.recursive_paths == (str(core),)
+        assert resolved.paths == (str(project_dir),)
+
+    def test_a_missing_subdirectory_is_reported(self, project_dir, search_path):
+        locations = {'project2_core': Location(project='project2', path='core')}
+
+        resolved = resolve_paths(
+                self.info(project_dir, 'project2_core'), self.repositories(), [search_path], locations)
+
+        # The name says which directory of which project was looked for.
+        assert resolved.missing == ('project2/core',)
+        assert resolved.paths == (str(project_dir),)
+
+    def test_a_missing_project_is_reported_once(self, project_dir, search_path):
+        locations = {
+            'absent_core': Location(project=UNKNOWN_PROJECT, path='core'),
+            'absent_utils': Location(project=UNKNOWN_PROJECT, path='utils'),
+        }
+        repositories = self.repositories(
+                **{UNKNOWN_PROJECT: Repository(name=UNKNOWN_PROJECT, version='master')})
+
+        resolved = resolve_paths(
+                self.info(project_dir, 'absent_core', 'absent_utils'),
+                repositories, [search_path], locations)
+
+        assert resolved.missing == (UNKNOWN_PROJECT,)
+
+    def test_a_project_absent_from_the_repos_file_is_ignored(self, project_dir, search_path):
+        locations = {'project9_core': Location(project='project9', path='core')}
+
+        resolved = resolve_paths(
+                self.info(project_dir, 'project9_core'), self.repositories(), [search_path], locations)
+
+        assert resolved.paths == (str(project_dir),)
+        assert resolved.missing == ()

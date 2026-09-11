@@ -12,6 +12,10 @@ If no `colcon.pkg` is found either way, `colocon` must fall back on `CMakeLists.
 first and in the first level of its subdirectories otherwise, taking as dependencies the packages named by the
 `find_package` commands of every listfile read.
 Then `colocon` must search the file `${project_name}.repos` and obtain the dependencies and versions.
+* Must support a `dependency-locations` mapping in the configuration file, placing a dependency inside another
+repository: the *repos* file must then be asked about that project instead of the dependency, and the directory
+of its worktree holding the dependency is what must be passed to `colcon`. Without an explicit `path`, the
+directory is the dependency's own name.
 * Must leave the build and install directories to `colcon`. `colocon` must never add `--build-base` nor
 `--install-base`, and must forward them untouched when the user passes them.
 * Must default `--mixin` to `rel-with-deb-info` for the `build` verb, unless the user asks for a mixin.

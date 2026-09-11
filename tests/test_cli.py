@@ -6,6 +6,7 @@ import yaml
 
 from colocon import cli
 from colocon.config import Config
+from colocon.resolve import Location
 from colocon.runner import COLCON_BUILD_DIR
 
 
@@ -249,6 +250,42 @@ class TestCMakeFallback:
             str(project_dir),
         ]
         assert 'Threads' not in ' '.join(argv)
+
+
+class TestDependencyLocations:
+    """A dependency living inside another repository's worktree."""
+
+    def test_the_subdirectory_reaches_colcon(
+            self, config, colcon, search_path, write_pkg, write_repos):
+        core = search_path / 'project2' / '2.x' / 'core'
+        core.mkdir()
+        config(search_paths=(search_path,),
+               dependency_locations={'project2_core': Location(project='project2', path='core')})
+        write_repos('project1', {'project2': {'version': '2.x'}})
+        project_dir = write_pkg(name='project1', dependencies=['project2_core'])
+
+        assert cli.main(['-p', str(project_dir), 'build']) == 0
+
+        assert option_values(colcon.calls[0], '--paths') == [str(core), str(project_dir)]
+
+    def test_a_missing_subdirectory_is_reported(
+            self, config, colcon, search_path, write_pkg, write_repos, capsys):
+        config(search_paths=(search_path,),
+               dependency_locations={'project2_core': Location(project='project2', path='core')})
+        write_repos('project1', {'project2': {'version': '2.x'}})
+        project_dir = write_pkg(name='project1', dependencies=['project2_core'])
+
+        assert cli.main(['-p', str(project_dir), 'build']) == 0
+        assert 'project2/core' in capsys.readouterr().err
+
+    def test_a_malformed_configuration_is_rejected(self, monkeypatch, write_pkg, capsys):
+        def explode():
+            raise ValueError('dependency-locations: nonsense')
+
+        monkeypatch.setattr(cli, 'load_config', explode)
+
+        assert cli.main(['-p', str(write_pkg(name='project1')), 'build']) == 2
+        assert 'dependency-locations' in capsys.readouterr().err
 
 
 class TestCompileCommands:

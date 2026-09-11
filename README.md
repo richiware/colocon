@@ -12,6 +12,7 @@ paths to `colcon`, and leaves every other decision to `colcon` itself.
 - [Repository layout](#repository-layout)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Dependencies inside another repository](#dependencies-inside-another-repository)
 - [Usage](#usage)
 - [Describing a project](#describing-a-project)
 - [Projects of several packages](#projects-of-several-packages)
@@ -71,11 +72,54 @@ compile_commands: true
 | --- | --- | --- | --- |
 | `search-paths` | list of paths | empty | Where to look for dependency repositories, in order. |
 | `compile_commands` | boolean | `false` | Join every `compile_commands.json` after a successful build. |
+| `dependency-locations` | mapping | empty | Dependencies that live inside another repository — see below. |
 
 A search path may start with `~`, which is expanded to your home directory. Environment variables are **not**
 expanded, so a path such as `$HOME/repos` silently matches nothing — write `~/repos` instead. A missing or empty
 configuration file is fine: `colocon` then reports every dependency it could not locate and builds the project
 on its own.
+
+### Dependencies inside another repository
+
+`colocon` assumes a dependency is a repository of its own, found under a search path by its own name. That does
+not hold for a package living in a subdirectory of a repository: `find_package(stardust_core)` names a package,
+but there is no `stardust_core` repository — it is part of `stardust`.
+
+`dependency-locations` says where such a dependency really lives:
+
+```yaml
+dependency-locations:
+  stardust_core:
+    project: stardust
+    path: core
+  stardust_utils:
+    project: stardust        # path defaults to `stardust_utils`
+  nebula_msgs: nebula        # shorthand for `project: nebula`
+```
+
+| Key | Meaning |
+| --- | --- |
+| `project` | Repository to look up in the *repos* file, in place of the dependency itself. |
+| `path` | Directory of its worktree holding the dependency. Defaults to the dependency's own name; write `.` for the worktree itself. |
+
+The *repos* file is then asked about the **project**, and the directory within its worktree is what `colcon`
+receives:
+
+```console
+$ colocon build
+colcon build --paths ~/repos/stardust/1.0/core ~/repos/stardust/1.0/stardust_utils \
+             ~/repos/nebula/main --mixin rel-with-deb-info
+```
+
+So only `stardust` needs a `version` in the *repos* file, however many of its packages a project depends on.
+A few details follow from that:
+
+- **One worktree, several directories.** Each mapped dependency contributes its own path, and a directory asked
+  for twice is passed once.
+- **The repository's `recursive` flag still decides** whether a path goes to `--paths` or `--base-paths`.
+- **A directory that does not exist is reported** as `<project>/<path>`, which names both what was looked for
+  and where.
+- **A malformed entry is refused** before anything is built, with exit code `2`.
 
 ## Usage
 
@@ -118,7 +162,7 @@ neither `--build-base` nor `--install-base`, and forwards both untouched when yo
 | --- | --- |
 | `0` | Success. |
 | `1` | `colcon.pkg` could not be read, or no verb was given. |
-| `2` | An argument was rejected: unknown to `colocon`, or a `--build-base` with no value. |
+| `2` | An argument or a configuration entry was rejected. |
 | `130` | Interrupted with <kbd>Ctrl</kbd>+<kbd>C</kbd>. |
 | *other* | Whatever `colcon` returned, forwarded unchanged. |
 
@@ -267,10 +311,12 @@ worktree — under `~/repos/nebula/main` it reads `nebula.repos`.
 1. Find the project's packages and their dependencies, from `colcon.pkg` or from `CMakeLists.txt` — see
    [Which description wins](#which-description-wins).
 2. Read the `repositories` of `<name>.repos`.
-3. Join the two: a repository is selected when the project declares it as a dependency, so a *repos* file may
-   pin versions for more repositories than a given project needs.
+3. Join the two: a repository is selected when the project declares it as a dependency, or holds one by way of
+   `dependency-locations`, so a *repos* file may pin versions for more repositories than a project needs.
 4. For each selected repository, look for the first of these that exists, across the search paths in order:
-   `<search-path>/<name>/<version>`, then `<search-path>/<name>/master`.
+   `<search-path>/<name>/<version>`, then `<search-path>/<name>/master`. A dependency placed by
+   [`dependency-locations`](#dependencies-inside-another-repository) contributes the directory of that worktree
+   holding it, rather than the worktree itself.
 5. Pass what was found to `colcon`, together with the project's own package directories.
 
 A dependency whose worktree cannot be found is reported on stderr and skipped — the build still runs, and
