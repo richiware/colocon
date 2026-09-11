@@ -12,7 +12,8 @@ search paths yields the directories handed to ``colcon``.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterable
+import re
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import yaml
@@ -26,6 +27,19 @@ DEFAULT_VERSION = 'master'
 #: needs it, its worktree has to be part of the workspace, so `colocon` takes
 #: the union of them all.
 DEPENDENCY_KEYS = ('dependencies', 'build-dependencies', 'run-dependencies', 'test-dependencies')
+
+#: File describing a package to `colcon` directly.
+COLCON_PKG = 'colcon.pkg'
+
+#: File a CMake package is recognised by, used when no ``colcon.pkg`` says
+#: anything. Its ``find_package`` commands stand in for a dependency list.
+CMAKE_LISTS = 'CMakeLists.txt'
+
+#: ``find_package(<name> ...)``. CMake command names are case insensitive and
+#: may be separated from the parenthesis by blanks. A name built from a
+#: variable, ``find_package(${SOME_NAME})``, matches nothing on purpose: there
+#: is no way to tell what it would expand to.
+FIND_PACKAGE = re.compile(r'\bfind_package\s*\(\s*"?([A-Za-z0-9_.+-]+)', re.IGNORECASE)
 
 PathLike = str | Path
 
@@ -89,14 +103,48 @@ def read_colcon_pkg(package_dir: PathLike) -> dict | None:
     Returns ``None`` when the directory holds no such file, and an empty
     mapping when the file is empty.
     """
-    package_path = Path(package_dir) / 'colcon.pkg'
+    package_path = Path(package_dir) / COLCON_PKG
     if not package_path.is_file():
         return None
     return yaml.safe_load(package_path.read_text()) or {}
 
 
-def find_package_dirs(project_dir: PathLike) -> tuple[Path, ...]:
-    """Subdirectories of `project_dir`, one level down, that hold a package.
+def colcon_pkg_dependencies(package_dir: PathLike) -> tuple[str, ...]:
+    """Dependencies the ``colcon.pkg`` of `package_dir` declares."""
+    return read_dependencies(read_colcon_pkg(package_dir) or {})
+
+
+def strip_cmake_comments(text: str) -> str:
+    """Remove the comments of a CMake listfile.
+
+    Both the bracket form and the line form are dropped, so that a command
+    somebody commented out is not read as a dependency.
+    """
+    without_brackets = re.sub(r'#\[\[.*?\]\]', '', text, flags=re.DOTALL)
+    return re.sub(r'#[^\n]*', '', without_brackets)
+
+
+def cmake_dependencies(package_dir: PathLike) -> tuple[str, ...]:
+    """Dependencies the ``CMakeLists.txt`` of `package_dir` looks for.
+
+    Every package named by a ``find_package`` command counts as a dependency,
+    keeping the first mention of a package looked for more than once. Returns
+    an empty tuple when the directory holds no ``CMakeLists.txt``, as a project
+    without dependencies and one without the file both resolve to nothing.
+    """
+    cmake_path = Path(package_dir) / CMAKE_LISTS
+    if not cmake_path.is_file():
+        return ()
+
+    dependencies: list[str] = []
+    for name in FIND_PACKAGE.findall(strip_cmake_comments(cmake_path.read_text(errors='replace'))):
+        if name not in dependencies:
+            dependencies.append(name)
+    return tuple(dependencies)
+
+
+def find_package_dirs(project_dir: PathLike, marker: str) -> tuple[Path, ...]:
+    """Subdirectories of `project_dir`, one level down, holding a `marker` file.
 
     Only the first level is looked at: `colcon` crawls whatever is deeper on
     its own once it is pointed at a package.
@@ -106,23 +154,49 @@ def find_package_dirs(project_dir: PathLike) -> tuple[Path, ...]:
         return ()
     return tuple(sorted(
         entry for entry in root.iterdir()
-        if entry.is_dir() and (entry / 'colcon.pkg').is_file()
+        if entry.is_dir() and (entry / marker).is_file()
     ))
+
+
+def _project_of(
+    root: Path,
+    package_dirs: tuple[Path, ...],
+    read: Callable[[PathLike], tuple[str, ...]],
+) -> ProjectInfo:
+    """Describe a project made of `package_dirs`, reading each one with `read`.
+
+    No file states a project name in this case, so the directory holding the
+    worktree provides it: the ``<repository>/<worktree>`` layout puts the
+    repository name there, and the *repos* file is named after it.
+    """
+    dependencies: list[str] = []
+    for package_dir in package_dirs:
+        for dependency in read(package_dir):
+            if dependency not in dependencies:
+                dependencies.append(dependency)
+
+    return ProjectInfo(
+        name=root.parent.name,
+        dependencies=tuple(dependencies),
+        package_dirs=package_dirs,
+    )
 
 
 def read_project_info(project_dir: PathLike) -> ProjectInfo | None:
     """Describe the project rooted at `project_dir`.
 
-    A ``colcon.pkg`` in `project_dir` describes a project of a single package:
-    its ``name`` names the *repos* file, and its dependency keys are read.
+    Four places are tried, in this order, and the first that holds a package
+    describes the project:
 
-    Without one, the first level of subdirectories is searched for packages and
-    the dependencies of every ``colcon.pkg`` found there are joined. No file
-    states a name then, so the project takes the name of the directory holding
-    the worktree, as the ``<repository>/<worktree>`` layout puts the repository
-    name there.
+    1. a ``colcon.pkg`` in `project_dir`, which names the project itself;
+    2. a ``colcon.pkg`` in each subdirectory one level down;
+    3. a ``CMakeLists.txt`` in `project_dir`;
+    4. a ``CMakeLists.txt`` in each subdirectory one level down.
 
-    Returns ``None`` when no ``colcon.pkg`` is found either way.
+    A ``colcon.pkg`` states its dependencies; a ``CMakeLists.txt`` has them
+    read out of its ``find_package`` commands.
+
+    Returns ``None`` when none of the four finds a package.
     """
     root = Path(project_dir).resolve()
 
@@ -137,21 +211,18 @@ def read_project_info(project_dir: PathLike) -> ProjectInfo | None:
             package_dirs=(root,),
         )
 
-    package_dirs = find_package_dirs(root)
-    if not package_dirs:
-        return None
+    package_dirs = find_package_dirs(root, COLCON_PKG)
+    if package_dirs:
+        return _project_of(root, package_dirs, colcon_pkg_dependencies)
 
-    dependencies: list[str] = []
-    for package_dir in package_dirs:
-        for dependency in read_dependencies(read_colcon_pkg(package_dir) or {}):
-            if dependency not in dependencies:
-                dependencies.append(dependency)
+    if (root / CMAKE_LISTS).is_file():
+        return _project_of(root, (root,), cmake_dependencies)
 
-    return ProjectInfo(
-        name=root.parent.name,
-        dependencies=tuple(dependencies),
-        package_dirs=package_dirs,
-    )
+    package_dirs = find_package_dirs(root, CMAKE_LISTS)
+    if package_dirs:
+        return _project_of(root, package_dirs, cmake_dependencies)
+
+    return None
 
 
 def read_repositories(project_dir: PathLike, project_name: str) -> dict[str, Repository]:

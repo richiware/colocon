@@ -195,6 +195,62 @@ class TestPackagesInSubdirectories:
         assert colcon.calls == []
 
 
+class TestCMakeFallback:
+    """A project described only by its CMake listfiles."""
+
+    def write_cmake(self, package_dir, *dependencies):
+        package_dir.mkdir(parents=True, exist_ok=True)
+        body = ''.join(f'find_package({name} REQUIRED)\n' for name in dependencies)
+        (package_dir / 'CMakeLists.txt').write_text('project(a_package)\n' + body)
+        return package_dir
+
+    def test_root_cmakelists_drives_the_build(
+            self, config, colcon, search_path, project_dir, write_repos):
+        config(search_paths=(search_path,))
+        write_repos('project1', {'project2': {'version': '2.x'}})
+        self.write_cmake(project_dir, 'project2')
+
+        assert cli.main(['-p', str(project_dir), 'build']) == 0
+
+        assert option_values(colcon.calls[0], '--paths') == [
+            str(search_path / 'project2' / '2.x'),
+            str(project_dir),
+        ]
+
+    def test_cmakelists_one_level_down_drives_the_build(
+            self, config, colcon, search_path, project_dir, write_repos):
+        config(search_paths=(search_path,))
+        write_repos('project1', {'project2': {'version': '2.x'}, 'project3': {'version': '3.x'}})
+        core = self.write_cmake(project_dir / 'core', 'project2')
+        tools = self.write_cmake(project_dir / 'tools', 'project3')
+
+        assert cli.main(['-p', str(project_dir), 'build']) == 0
+
+        assert option_values(colcon.calls[0], '--paths') == [
+            str(search_path / 'project2' / '2.x'),
+            str(search_path / 'project3' / '3.x'),
+            str(core),
+            str(tools),
+        ]
+
+    def test_cmake_packages_not_in_the_repos_file_are_ignored(
+            self, config, colcon, search_path, project_dir, write_repos):
+        # A find_package of a system package such as Threads names no
+        # repository, so the join drops it without a word.
+        config(search_paths=(search_path,))
+        write_repos('project1', {'project2': {'version': '2.x'}})
+        self.write_cmake(project_dir, 'Threads', 'project2', 'OpenSSL')
+
+        assert cli.main(['-p', str(project_dir), 'build']) == 0
+
+        argv = colcon.calls[0]
+        assert option_values(argv, '--paths') == [
+            str(search_path / 'project2' / '2.x'),
+            str(project_dir),
+        ]
+        assert 'Threads' not in ' '.join(argv)
+
+
 class TestCompileCommands:
 
     def test_not_joined_when_disabled(self, config, colcon, monkeypatch, write_pkg):

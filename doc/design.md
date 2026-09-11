@@ -8,6 +8,9 @@ every dependency key that file supports: `dependencies`, `build-dependencies`, `
 If that directory has no `colcon.pkg`, `colocon` must search the first level of its subdirectories for
 packages, join the dependencies of every `colcon.pkg` found there, name the project after the directory holding
 the worktree, and pass each package directory to `colcon`.
+If no `colcon.pkg` is found either way, `colocon` must fall back on `CMakeLists.txt`, in the project directory
+first and in the first level of its subdirectories otherwise, taking as dependencies the packages named by the
+`find_package` commands of every listfile read.
 Then `colocon` must search the file `${project_name}.repos` and obtain the dependencies and versions.
 * Must leave the build and install directories to `colcon`. `colocon` must never add `--build-base` nor
 `--install-base`, and must forward them untouched when the user passes them.

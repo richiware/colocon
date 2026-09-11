@@ -11,6 +11,7 @@ from colocon.resolve import (
     DEPENDENCY_KEYS,
     ProjectInfo,
     Repository,
+    cmake_dependencies,
     find_package_dirs,
     find_worktree,
     read_project_info,
@@ -126,22 +127,22 @@ class TestPackagesInSubdirectories:
         core = self.write_package(project_dir, 'core', name='project1_core')
         tools = self.write_package(project_dir, 'tools', name='project1_tools')
 
-        assert find_package_dirs(project_dir) == (core, tools)
+        assert find_package_dirs(project_dir, 'colcon.pkg') == (core, tools)
 
     def test_ignores_a_subdirectory_without_a_package(self, project_dir):
         core = self.write_package(project_dir, 'core', name='project1_core')
         (project_dir / 'docs').mkdir()
 
-        assert find_package_dirs(project_dir) == (core,)
+        assert find_package_dirs(project_dir, 'colcon.pkg') == (core,)
 
     def test_ignores_deeper_levels(self, project_dir):
         # colcon crawls deeper on its own once pointed at a package.
         self.write_package(project_dir, 'core/nested', name='nested')
 
-        assert find_package_dirs(project_dir) == ()
+        assert find_package_dirs(project_dir, 'colcon.pkg') == ()
 
     def test_absent_directory(self, tmp_path):
-        assert find_package_dirs(tmp_path / 'absent') == ()
+        assert find_package_dirs(tmp_path / 'absent', 'colcon.pkg') == ()
 
     def test_dependencies_of_every_package_are_joined(self, project_dir):
         self.write_package(project_dir, 'core', name='project1_core', dependencies=['project2'])
@@ -190,6 +191,175 @@ class TestPackagesInSubdirectories:
         assert info.name == 'project1'
         assert info.dependencies == ('project2',)
         assert info.package_dirs == (project_dir.resolve(),)
+
+
+class TestCMakeDependencies:
+    """Without any `colcon.pkg`, `find_package` stands in for a dependency list."""
+
+    def write_cmake(self, package_dir, body):
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / 'CMakeLists.txt').write_text(body)
+        return package_dir
+
+    def test_absent_file(self, project_dir):
+        assert cmake_dependencies(project_dir) == ()
+
+    def test_without_any_find_package(self, project_dir):
+        self.write_cmake(project_dir, 'project(project1)\nadd_library(project1 src/a.cpp)\n')
+        assert cmake_dependencies(project_dir) == ()
+
+    def test_plain_command(self, project_dir):
+        self.write_cmake(project_dir, 'find_package(project2 REQUIRED)\n')
+        assert cmake_dependencies(project_dir) == ('project2',)
+
+    def test_command_name_is_case_insensitive(self, project_dir):
+        self.write_cmake(project_dir, 'FIND_PACKAGE(project2)\nFind_Package(project3)\n')
+        assert cmake_dependencies(project_dir) == ('project2', 'project3')
+
+    def test_blanks_before_the_parenthesis(self, project_dir):
+        self.write_cmake(project_dir, 'find_package (project2 REQUIRED)\n')
+        assert cmake_dependencies(project_dir) == ('project2',)
+
+    def test_command_spanning_several_lines(self, project_dir):
+        self.write_cmake(project_dir, 'find_package(\n    project2\n    REQUIRED\n)\n')
+        assert cmake_dependencies(project_dir) == ('project2',)
+
+    def test_quoted_name(self, project_dir):
+        self.write_cmake(project_dir, 'find_package("project2" REQUIRED)\n')
+        assert cmake_dependencies(project_dir) == ('project2',)
+
+    def test_version_and_components_are_not_dependencies(self, project_dir):
+        self.write_cmake(project_dir, 'find_package(project2 1.70 REQUIRED COMPONENTS system filesystem)\n')
+        assert cmake_dependencies(project_dir) == ('project2',)
+
+    def test_a_package_looked_for_twice_is_kept_once(self, project_dir):
+        self.write_cmake(project_dir, 'find_package(project2 REQUIRED)\nfind_package(project2 QUIET)\n')
+        assert cmake_dependencies(project_dir) == ('project2',)
+
+    def test_a_commented_out_command_is_ignored(self, project_dir):
+        self.write_cmake(project_dir, 'find_package(project2)\n# find_package(project3 REQUIRED)\n')
+        assert cmake_dependencies(project_dir) == ('project2',)
+
+    def test_a_bracket_comment_is_ignored(self, project_dir):
+        self.write_cmake(project_dir, 'find_package(project2)\n#[[\nfind_package(project3)\n]]\n')
+        assert cmake_dependencies(project_dir) == ('project2',)
+
+    def test_a_name_built_from_a_variable_is_skipped(self, project_dir):
+        # There is no telling what it would expand to.
+        self.write_cmake(project_dir, 'find_package(${DEPENDENCY} REQUIRED)\nfind_package(project2)\n')
+        assert cmake_dependencies(project_dir) == ('project2',)
+
+    def test_a_similar_command_is_not_mistaken_for_one(self, project_dir):
+        self.write_cmake(project_dir, 'find_package_handle_standard_args(project3 DEFAULT_MSG X)\n')
+        assert cmake_dependencies(project_dir) == ()
+
+    def test_a_conditional_command_still_counts(self, project_dir):
+        # Conditions are not evaluated, so a dependency of one branch is taken.
+        self.write_cmake(project_dir, 'if(BUILD_TESTING)\n  find_package(project2 REQUIRED)\nendif()\n')
+        assert cmake_dependencies(project_dir) == ('project2',)
+
+
+class TestCMakeFallback:
+    """`CMakeLists.txt` is read only when no `colcon.pkg` says anything."""
+
+    def write_cmake(self, package_dir, *dependencies):
+        package_dir.mkdir(parents=True, exist_ok=True)
+        body = ''.join(f'find_package({name} REQUIRED)\n' for name in dependencies)
+        (package_dir / 'CMakeLists.txt').write_text('project(a_package)\n' + body)
+        return package_dir
+
+    def write_colcon_pkg(self, package_dir, **content):
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / 'colcon.pkg').write_text(yaml.dump(content))
+        return package_dir
+
+    def test_root_cmakelists_describes_the_project(self, project_dir):
+        self.write_cmake(project_dir, 'project2', 'project3')
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project2', 'project3')
+        assert info.package_dirs == (project_dir.resolve(),)
+
+    def test_root_cmakelists_is_named_after_the_repository(self, project_dir):
+        # project_dir is `<tmp>/project1/main`, so the repos file is project1.repos.
+        self.write_cmake(project_dir, 'project2')
+
+        assert read_project_info(project_dir).name == 'project1'
+
+    def test_cmakelists_one_level_down(self, project_dir):
+        core = self.write_cmake(project_dir / 'core', 'project2')
+        tools = self.write_cmake(project_dir / 'tools', 'project3')
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project2', 'project3')
+        assert info.package_dirs == (core, tools)
+        assert info.name == 'project1'
+
+    def test_a_dependency_of_several_packages_is_kept_once(self, project_dir):
+        self.write_cmake(project_dir / 'core', 'project2')
+        self.write_cmake(project_dir / 'tools', 'project2', 'project3')
+
+        assert read_project_info(project_dir).dependencies == ('project2', 'project3')
+
+    def test_a_subdirectory_without_cmakelists_is_ignored(self, project_dir):
+        core = self.write_cmake(project_dir / 'core', 'project2')
+        (project_dir / 'docs').mkdir()
+
+        assert read_project_info(project_dir).package_dirs == (core,)
+
+    def test_root_colcon_pkg_wins_over_root_cmakelists(self, project_dir):
+        self.write_cmake(project_dir, 'project3')
+        self.write_colcon_pkg(project_dir, name='project1', dependencies=['project2'])
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project2',)
+
+    def test_colcon_pkg_one_level_down_wins_over_root_cmakelists(self, project_dir):
+        # The second place tried comes before the third.
+        self.write_cmake(project_dir, 'project3')
+        self.write_colcon_pkg(project_dir / 'core', name='project1_core', dependencies=['project2'])
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project2',)
+        assert info.package_dirs == (project_dir / 'core',)
+
+    def test_colcon_pkg_one_level_down_wins_over_cmakelists_beside_it(self, project_dir):
+        # A package with both files is described by its colcon.pkg, and a
+        # sibling offering only CMakeLists.txt is not picked up.
+        core = self.write_cmake(project_dir / 'core', 'project3')
+        self.write_colcon_pkg(core, name='project1_core', dependencies=['project2'])
+        self.write_cmake(project_dir / 'tools', 'project4')
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project2',)
+        assert info.package_dirs == (core,)
+
+    def test_root_cmakelists_wins_over_subdirectories(self, project_dir):
+        self.write_cmake(project_dir, 'project2')
+        self.write_cmake(project_dir / 'core', 'project3')
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project2',)
+        assert info.package_dirs == (project_dir.resolve(),)
+
+    def test_nothing_anywhere(self, project_dir):
+        (project_dir / 'docs').mkdir()
+
+        assert read_project_info(project_dir) is None
+
+    def test_a_package_without_find_package(self, project_dir):
+        self.write_cmake(project_dir / 'core')
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ()
+        assert info.package_dirs == (project_dir / 'core',)
 
 
 class TestReadRepositories:

@@ -15,6 +15,8 @@ paths to `colcon`, and leaves every other decision to `colcon` itself.
 - [Usage](#usage)
 - [Describing a project](#describing-a-project)
 - [Projects of several packages](#projects-of-several-packages)
+- [Projects without a `colcon.pkg`](#projects-without-a-colconpkg)
+- [Which description wins](#which-description-wins)
 - [How dependencies are resolved](#how-dependencies-are-resolved)
 - [Compilation database](#compilation-database)
 - [Development](#development)
@@ -204,20 +206,66 @@ colcon build --paths ~/repos/quasar/2.3.x ~/repos/pulsar/master \
              ~/repos/nebula/main/core ~/repos/nebula/main/tools --mixin rel-with-deb-info
 ```
 
-Two details are worth knowing:
-
-- **Only the first level is searched.** A package nested deeper is not found, since `colcon` crawls further on
-  its own once it is pointed at a package directory.
-- **The *repos* file is named after the repository directory.** No `colcon.pkg` states a project name here, so
-  `colocon` takes it from the directory holding the worktree: under `~/repos/nebula/main` it reads
-  `nebula.repos`.
+**Only the first level is searched.** A package nested deeper is not found, since `colcon` crawls further on
+its own once it is pointed at a package directory.
 
 A `colcon.pkg` in the project directory always wins: the subdirectories are searched only in its absence.
 
+### Projects without a `colcon.pkg`
+
+A project that never adopted `colcon.pkg` is described by its CMake listfiles instead. When no `colcon.pkg` is
+found — neither in the project directory nor one level down — `colocon` reads `CMakeLists.txt`, and every
+package named by a `find_package` command counts as a dependency:
+
+```cmake
+cmake_minimum_required(VERSION 3.16)
+project(nebula VERSION 1.0 LANGUAGES CXX)
+
+find_package(quasar 2.3 REQUIRED)       # a dependency
+find_package(Threads REQUIRED)          # not in nebula.repos, so ignored
+# find_package(pulsar REQUIRED)         # commented out, so not read
+```
+
+```console
+$ colocon build
+colcon build --paths ~/repos/quasar/2.3.x ~/repos/nebula/main --mixin rel-with-deb-info
+```
+
+As with `colcon.pkg`, a `CMakeLists.txt` in the project directory describes a single package, and otherwise the
+first level of subdirectories is searched, each one found becoming a package of the project.
+
+The commands are read, not evaluated, which is worth keeping in mind:
+
+- A `find_package` naming nothing in the *repos* file — `Threads`, `OpenSSL`, and the like — is dropped by the
+  join without a word, so listfiles need no cleaning up.
+- Conditions are not evaluated: a `find_package` inside an `if` block counts, whichever way the condition would
+  have gone.
+- A name built from a variable, `find_package(${DEPENDENCY})`, is skipped, since there is no telling what it
+  would expand to.
+- Commented-out commands, in either `#` or `#[[ ]]` form, are not read.
+
+### Which description wins
+
+Four places are tried, and the first holding a package describes the project:
+
+| | Place | Dependencies from |
+| --- | --- | --- |
+| 1 | `colcon.pkg` in the project directory | its dependency keys |
+| 2 | `colcon.pkg` one level down | the dependency keys of each |
+| 3 | `CMakeLists.txt` in the project directory | its `find_package` commands |
+| 4 | `CMakeLists.txt` one level down | the `find_package` commands of each |
+
+Only the first match is used: a single `colcon.pkg` in one subdirectory describes the project on its own, and a
+sibling offering only a `CMakeLists.txt` is not picked up. Add a `colcon.pkg` to a package to state its
+dependencies exactly, and none of its listfiles are read.
+
+Except in the first case, no file states a project name, so `colocon` takes it from the directory holding the
+worktree — under `~/repos/nebula/main` it reads `nebula.repos`.
+
 ## How dependencies are resolved
 
-1. Read `name` and the dependency keys from `colcon.pkg`, or from the packages one level down when the project
-   has no `colcon.pkg` of its own — see [Projects of several packages](#projects-of-several-packages).
+1. Find the project's packages and their dependencies, from `colcon.pkg` or from `CMakeLists.txt` — see
+   [Which description wins](#which-description-wins).
 2. Read the `repositories` of `<name>.repos`.
 3. Join the two: a repository is selected when the project declares it as a dependency, so a *repos* file may
    pin versions for more repositories than a given project needs.

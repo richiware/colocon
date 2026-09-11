@@ -46,8 +46,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     project_info = read_project_info(options.project_dir)
     if project_info is None:
-        print('Cannot get info from a colcon.pkg, in the project directory or its subdirectories',
-              file=sys.stderr)
+        print('Cannot find a package: no colcon.pkg nor CMakeLists.txt in the project directory'
+              ' or its subdirectories', file=sys.stderr)
         return 1
 
     repositories = read_repositories(options.project_dir, project_info.name)
