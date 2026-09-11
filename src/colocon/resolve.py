@@ -35,6 +35,17 @@ COLCON_PKG = 'colcon.pkg'
 #: anything. Its ``find_package`` commands stand in for a dependency list.
 CMAKE_LISTS = 'CMakeLists.txt'
 
+#: File some projects keep their settings in, beside the ``CMakeLists.txt``
+#: that includes it. Its dependencies count as the package's own.
+PROJECT_SETTINGS = 'project_settings.cmake'
+
+#: Variable of `PROJECT_SETTINGS` listing the packages to look for.
+MODULE_FIND_PACKAGES = 'MODULE_FIND_PACKAGES'
+
+#: ``set(<name> ...)``. The command name is case insensitive, the variable is
+#: not, so the name is matched afterwards rather than by the pattern.
+SET_COMMAND = re.compile(r'\bset\s*(\()\s*([A-Za-z0-9_]+)', re.IGNORECASE)
+
 #: ``find_package(<name> ...)``. CMake command names are case insensitive and
 #: may be separated from the parenthesis by blanks. A name built from a
 #: variable, ``find_package(${SOME_NAME})``, matches nothing on purpose: there
@@ -157,12 +168,22 @@ def colcon_pkg_declarations(package_dir: PathLike) -> tuple[tuple[str, Origin], 
 
 
 def cmake_declarations(package_dir: PathLike) -> tuple[tuple[str, Origin], ...]:
-    """Dependencies of the ``CMakeLists.txt`` of `package_dir`, and where each is."""
-    origin_file = Path(package_dir) / CMAKE_LISTS
-    return tuple(
-        (dependency, Origin(file=origin_file, line=line))
+    """Dependencies of a CMake package, and where each of them is.
+
+    Both files a package may state them in are read: the ``find_package``
+    commands of the ``CMakeLists.txt``, and the ``MODULE_FIND_PACKAGES`` of
+    the ``project_settings.cmake`` beside it, which is where a project built on
+    that convention keeps them.
+    """
+    declarations = [
+        (dependency, Origin(file=Path(package_dir) / CMAKE_LISTS, line=line))
         for dependency, line in declared_cmake_dependencies(package_dir)
-    )
+    ]
+    declarations += [
+        (dependency, Origin(file=Path(package_dir) / PROJECT_SETTINGS, line=line))
+        for dependency, line in declared_settings_dependencies(package_dir)
+    ]
+    return tuple(declarations)
 
 
 def strip_cmake_comments(text: str) -> str:
@@ -200,6 +221,55 @@ def declared_cmake_dependencies(package_dir: PathLike) -> tuple[tuple[str, int],
 def cmake_dependencies(package_dir: PathLike) -> tuple[str, ...]:
     """Dependencies the ``CMakeLists.txt`` of `package_dir` looks for."""
     return tuple(dependency for dependency, _line in declared_cmake_dependencies(package_dir))
+
+
+def _closing_parenthesis(text: str, opening: int) -> int:
+    """Index of the parenthesis closing the one at `opening`."""
+    depth = 0
+    for index in range(opening, len(text)):
+        if text[index] == '(':
+            depth += 1
+        elif text[index] == ')':
+            depth -= 1
+            if depth == 0:
+                return index
+    return len(text)
+
+
+def declared_settings_dependencies(package_dir: PathLike) -> tuple[tuple[str, int], ...]:
+    """Dependencies listed by the ``project_settings.cmake`` of `package_dir`.
+
+    Every name of a ``set(MODULE_FIND_PACKAGES ...)`` counts as a dependency,
+    paired with the line naming it, and the first mention is the one kept. The
+    variable is commonly set more than once, a platform adding to what it
+    already held, so every such command is read.
+
+    A name `colocon` cannot read as a package — a variable, the
+    ``${MODULE_FIND_PACKAGES}`` of such an addition included, or a generator
+    expression — is passed over, since there is no telling what it stands for.
+    Returns nothing when the directory holds no ``project_settings.cmake``.
+    """
+    settings_path = Path(package_dir) / PROJECT_SETTINGS
+    if not settings_path.is_file():
+        return ()
+
+    text = strip_cmake_comments(settings_path.read_text(errors='replace'))
+    declared: dict[str, int] = {}
+    for command in SET_COMMAND.finditer(text):
+        if command.group(2) != MODULE_FIND_PACKAGES:
+            continue
+        body = text[command.end():_closing_parenthesis(text, command.start(1))]
+        for token in re.finditer(r'\S+', body):
+            name = token.group().strip('"\'')
+            if not name or any(character in name for character in '$<>{}'):
+                continue
+            declared.setdefault(name, text.count('\n', 0, command.end() + token.start()) + 1)
+    return tuple(declared.items())
+
+
+def settings_dependencies(package_dir: PathLike) -> tuple[str, ...]:
+    """Dependencies the ``project_settings.cmake`` of `package_dir` lists."""
+    return tuple(dependency for dependency, _line in declared_settings_dependencies(package_dir))
 
 
 def find_package_dirs(project_dir: PathLike, marker: str) -> tuple[Path, ...]:

@@ -16,6 +16,7 @@ from colocon.resolve import (
     cmake_dependencies,
     declared_cmake_dependencies,
     declared_dependencies,
+    declared_settings_dependencies,
     find_package_dirs,
     find_worktree,
     read_project_info,
@@ -23,6 +24,7 @@ from colocon.resolve import (
     requested_paths,
     resolve_paths,
     select_dependencies,
+    settings_dependencies,
 )
 
 #: A project name that is absent from the search path fixture.
@@ -846,3 +848,166 @@ class TestOrigins:
         info = read_project_info(project_dir)
 
         assert set(info.origins) == set(info.dependencies)
+
+
+#: The shape a real `project_settings.cmake` has, the platform addition and
+#: the other variables around it included.
+PROJECT_SETTINGS = """\
+set(MODULE_NAME
+    project1_core)
+
+set(MODULE_FIND_PACKAGES
+    yaml-cpp
+    project2
+    project3)
+
+if(WIN32)
+    set(MODULE_FIND_PACKAGES
+        ${MODULE_FIND_PACKAGES}
+        project4)
+endif()
+
+set(MODULE_DEPENDENCIES
+    project9
+    $<IF:$<BOOL:${WIN32}>,$<IF:$<TARGET_EXISTS:LZ4::lz4>,LZ4::lz4,lz4::lz4>,lz4>)
+
+set(MODULE_CPP_VERSION
+    C++17)
+"""
+
+
+class TestDeclaredSettingsDependencies:
+    """`MODULE_FIND_PACKAGES` of a `project_settings.cmake`."""
+
+    def write_settings(self, package_dir, body):
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / 'project_settings.cmake').write_text(body)
+        return package_dir
+
+    def test_absent_file(self, project_dir):
+        assert declared_settings_dependencies(project_dir) == ()
+
+    def test_a_realistic_file(self, project_dir):
+        self.write_settings(project_dir, PROJECT_SETTINGS)
+
+        # Both commands are read, and the addition's self reference is not a
+        # package name.
+        assert declared_settings_dependencies(project_dir) == (
+            ('yaml-cpp', 5), ('project2', 6), ('project3', 7), ('project4', 12))
+
+    def test_other_variables_are_left_alone(self, project_dir):
+        self.write_settings(project_dir, PROJECT_SETTINGS)
+
+        found = settings_dependencies(project_dir)
+
+        assert 'project1_core' not in found    # MODULE_NAME
+        assert 'project9' not in found         # MODULE_DEPENDENCIES
+        assert 'C++17' not in found            # MODULE_CPP_VERSION
+
+    def test_the_self_reference_of_an_addition_is_skipped(self, project_dir):
+        self.write_settings(
+                project_dir,
+                'set(MODULE_FIND_PACKAGES\n    ${MODULE_FIND_PACKAGES}\n    project2)\n')
+        assert settings_dependencies(project_dir) == ('project2',)
+
+    def test_a_generator_expression_is_skipped(self, project_dir):
+        self.write_settings(
+                project_dir,
+                'set(MODULE_FIND_PACKAGES\n'
+                '    $<IF:$<BOOL:${WIN32}>,lz4,zstd>\n'
+                '    project2)\n')
+        assert settings_dependencies(project_dir) == ('project2',)
+
+    def test_a_name_on_the_same_line_as_the_command(self, project_dir):
+        self.write_settings(project_dir, 'set(MODULE_FIND_PACKAGES project2 project3)\n')
+        assert declared_settings_dependencies(project_dir) == (('project2', 1), ('project3', 1))
+
+    def test_an_uppercase_command(self, project_dir):
+        self.write_settings(project_dir, 'SET(MODULE_FIND_PACKAGES\n    project2)\n')
+        assert settings_dependencies(project_dir) == ('project2',)
+
+    def test_blanks_before_the_parenthesis(self, project_dir):
+        self.write_settings(project_dir, 'set (MODULE_FIND_PACKAGES\n    project2)\n')
+        assert settings_dependencies(project_dir) == ('project2',)
+
+    def test_a_similarly_named_variable_is_not_read(self, project_dir):
+        self.write_settings(project_dir, 'set(MODULE_FIND_PACKAGES_EXTRA\n    project2)\n')
+        assert settings_dependencies(project_dir) == ()
+
+    def test_a_lowercase_variable_is_not_read(self, project_dir):
+        # CMake variables are case sensitive, unlike its commands.
+        self.write_settings(project_dir, 'set(module_find_packages\n    project2)\n')
+        assert settings_dependencies(project_dir) == ()
+
+    def test_quoted_names(self, project_dir):
+        self.write_settings(project_dir, 'set(MODULE_FIND_PACKAGES\n    "project2")\n')
+        assert settings_dependencies(project_dir) == ('project2',)
+
+    def test_a_commented_out_name_is_ignored(self, project_dir):
+        self.write_settings(
+                project_dir, 'set(MODULE_FIND_PACKAGES\n    project2\n    # project3\n    )\n')
+        assert settings_dependencies(project_dir) == ('project2',)
+
+    def test_the_first_mention_of_a_name_wins(self, project_dir):
+        self.write_settings(
+                project_dir,
+                'set(MODULE_FIND_PACKAGES\n    project2)\nset(MODULE_FIND_PACKAGES\n    project2)\n')
+        assert declared_settings_dependencies(project_dir) == (('project2', 2),)
+
+    def test_nothing_after_the_closing_parenthesis_is_read(self, project_dir):
+        self.write_settings(
+                project_dir, 'set(MODULE_FIND_PACKAGES project2)\nset(SOMETHING_ELSE project3)\n')
+        assert settings_dependencies(project_dir) == ('project2',)
+
+
+class TestProjectSettingsInAProject:
+    """A CMake package stating its dependencies beside its `CMakeLists.txt`."""
+
+    def write_package(self, package_dir, cmake, settings=None):
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / 'CMakeLists.txt').write_text(cmake)
+        if settings is not None:
+            (package_dir / 'project_settings.cmake').write_text(settings)
+        return package_dir
+
+    def test_both_files_are_read(self, project_dir):
+        self.write_package(
+                project_dir / 'core',
+                'find_package(project4 REQUIRED)\n',
+                'set(MODULE_FIND_PACKAGES\n    project2\n    project3)\n')
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project4', 'project2', 'project3')
+
+    def test_the_settings_file_alone_does_not_make_a_package(self, project_dir):
+        # colcon needs a CMakeLists.txt to build anything.
+        (project_dir / 'core').mkdir()
+        (project_dir / 'core' / 'project_settings.cmake').write_text(
+                'set(MODULE_FIND_PACKAGES\n    project2)\n')
+
+        assert read_project_info(project_dir) is None
+
+    def test_the_origin_names_the_settings_file(self, project_dir):
+        core = self.write_package(
+                project_dir / 'core', 'project(a)\n', 'set(MODULE_FIND_PACKAGES\n    project2)\n')
+
+        origins = read_project_info(project_dir).origins
+
+        assert origins['project2'] == Origin(file=core / 'project_settings.cmake', line=2)
+
+    def test_a_colcon_pkg_still_wins(self, project_dir, write_pkg):
+        self.write_package(
+                project_dir, 'project(a)\n', 'set(MODULE_FIND_PACKAGES\n    project3)\n')
+        write_pkg(name='project1', dependencies=['project2'])
+
+        assert read_project_info(project_dir).dependencies == ('project2',)
+
+    def test_settings_beside_a_root_cmakelists(self, project_dir):
+        self.write_package(
+                project_dir, 'project(a)\n', 'set(MODULE_FIND_PACKAGES\n    project2)\n')
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project2',)
+        assert info.package_dirs == (project_dir.resolve(),)

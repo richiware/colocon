@@ -10,7 +10,9 @@ packages, join the dependencies of every `colcon.pkg` found there, name the proj
 the worktree, and pass each package directory to `colcon`.
 If no `colcon.pkg` is found either way, `colocon` must fall back on `CMakeLists.txt`, in the project directory
 first and in the first level of its subdirectories otherwise, taking as dependencies the packages named by the
-`find_package` commands of every listfile read.
+`find_package` commands of every listfile read, together with the `MODULE_FIND_PACKAGES` of any
+`project_settings.cmake` beside it, which may be set by more than one command. Names `colocon` cannot resolve to a package, such as generator expressions,
+must be passed over.
 Then `colocon` must search the file `${project_name}.repos` and obtain the dependencies and versions.
 * Must support a `dependency-locations` mapping in the configuration file, placing a dependency inside another
 repository: the *repos* file must then be asked about that project instead of the dependency, and the directory

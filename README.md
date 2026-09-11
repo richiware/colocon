@@ -201,11 +201,13 @@ nebula  (nebula.repos)
 
 Each dependency carries the place it was declared, so a surprising dependency can be traced back to the file
 that asked for it. A `colcon.pkg` names the key — `stardust_core` above is a build dependency of `core` — and a
-`CMakeLists.txt` names the line instead:
+`CMakeLists.txt` or a `project_settings.cmake` names the line instead:
 
 ```
    ├─ quasar         2.3.x   ~/repos/quasar/2.3.x
    │  └─ core/CMakeLists.txt:10
+   ├─ pulsar         master  ~/repos/pulsar/master
+   │  └─ core/project_settings.cmake:49
 ```
 
 Where a dependency is declared more than once, the first place `colocon` read it is the one shown: within a
@@ -331,10 +333,38 @@ colcon build --paths ~/repos/quasar/2.3.x ~/repos/nebula/main --mixin rel-with-d
 As with `colcon.pkg`, a `CMakeLists.txt` in the project directory describes a single package, and otherwise the
 first level of subdirectories is searched, each one found becoming a package of the project.
 
+A package that keeps its settings in a `project_settings.cmake` beside its `CMakeLists.txt` has the
+`MODULE_FIND_PACKAGES` of that file read as well, which is where such a project really lists what it needs — its
+`CMakeLists.txt` often names no dependency at all, having looked them up through that variable:
+
+```cmake
+set(MODULE_FIND_PACKAGES
+    yaml-cpp
+    fastcdr
+    fastdds
+    cpp_utils)
+
+if(WIN32)
+    set(MODULE_FIND_PACKAGES
+        ${MODULE_FIND_PACKAGES}
+        lz4
+        zstd)
+endif()
+```
+
+Both files count towards the same package. The variable is commonly set more than once, a platform adding to
+what it already held, so every such command is read — and the `${MODULE_FIND_PACKAGES}` naming the previous
+contents is passed over, as is any generator expression, there being no telling what either stands for.
+
+A `project_settings.cmake` does not make a package on its own: a directory still needs a `CMakeLists.txt` for
+`colcon` to build anything in it.
+
 The commands are read, not evaluated, which is worth keeping in mind:
 
-- A `find_package` naming nothing in the *repos* file — `Threads`, `OpenSSL`, and the like — is dropped by the
-  join without a word, so listfiles need no cleaning up.
+- A dependency naming nothing in the *repos* file — `Threads`, `OpenSSL`, a sibling package of the same project
+  — is dropped by the join without a word, so listfiles need no cleaning up. Run
+  [`colocon -d`](#diagnosing-a-project) to see which ones those are: a package that ought to have resolved is
+  usually one to add to [`dependency-locations`](#dependencies-inside-another-repository).
 - Conditions are not evaluated: a `find_package` inside an `if` block counts, whichever way the condition would
   have gone.
 - A name built from a variable, `find_package(${DEPENDENCY})`, is skipped, since there is no telling what it
@@ -349,8 +379,8 @@ Four places are tried, and the first holding a package describes the project:
 | --- | --- | --- |
 | 1 | `colcon.pkg` in the project directory | its dependency keys |
 | 2 | `colcon.pkg` one level down | the dependency keys of each |
-| 3 | `CMakeLists.txt` in the project directory | its `find_package` commands |
-| 4 | `CMakeLists.txt` one level down | the `find_package` commands of each |
+| 3 | `CMakeLists.txt` in the project directory | its `find_package` commands, and the `MODULE_FIND_PACKAGES` of a `project_settings.cmake` beside it |
+| 4 | `CMakeLists.txt` one level down | the same two files, for each |
 
 Only the first match is used: a single `colcon.pkg` in one subdirectory describes the project on its own, and a
 sibling offering only a `CMakeLists.txt` is not picked up. Add a `colcon.pkg` to a package to state its
