@@ -10,9 +10,12 @@ from colocon.resolve import (
     DEFAULT_VERSION,
     DEPENDENCY_KEYS,
     Location,
+    Origin,
     ProjectInfo,
     Repository,
     cmake_dependencies,
+    declared_cmake_dependencies,
+    declared_dependencies,
     find_package_dirs,
     find_worktree,
     read_project_info,
@@ -49,7 +52,11 @@ class TestReadProjectInfo:
         assert info == ProjectInfo(
                 name='project1',
                 dependencies=('project2', 'project3'),
-                package_dirs=(project_dir.resolve(),))
+                package_dirs=(project_dir.resolve(),),
+                origins={
+                    'project2': Origin(file=project_dir.resolve() / 'colcon.pkg', key='dependencies'),
+                    'project3': Origin(file=project_dir.resolve() / 'colcon.pkg', key='dependencies'),
+                })
 
     def test_relative_project_dir_becomes_absolute(self, monkeypatch, write_pkg):
         project_dir = write_pkg(name='project1')
@@ -720,3 +727,122 @@ class TestDependencyLocations:
 
         assert resolved.paths == (str(project_dir),)
         assert resolved.missing == ()
+
+
+class TestDeclaredDependencies:
+    """Which key of a `colcon.pkg` declared each dependency."""
+
+    def test_the_key_is_reported(self):
+        content = {'dependencies': ['project2'], 'test-dependencies': ['project3']}
+        assert declared_dependencies(content) == (('project2', 'dependencies'),
+                                                  ('project3', 'test-dependencies'))
+
+    def test_keys_are_read_in_order(self):
+        content = {'test-dependencies': ['project3'], 'dependencies': ['project2']}
+        assert [key for _name, key in declared_dependencies(content)] == [
+            'dependencies', 'test-dependencies']
+
+    def test_the_first_key_declaring_a_dependency_wins(self):
+        content = {'dependencies': ['project2'], 'build-dependencies': ['project2']}
+        assert declared_dependencies(content) == (('project2', 'dependencies'),)
+
+    def test_without_any_key(self):
+        assert declared_dependencies({}) == ()
+
+
+class TestDeclaredCMakeDependencies:
+    """Which line of a `CMakeLists.txt` looks for each dependency."""
+
+    def write_cmake(self, package_dir, body):
+        (package_dir / 'CMakeLists.txt').write_text(body)
+        return package_dir
+
+    def test_the_line_is_reported(self, project_dir):
+        self.write_cmake(project_dir, 'project(a)\nfind_package(project2)\n')
+        assert declared_cmake_dependencies(project_dir) == (('project2', 2),)
+
+    def test_several_commands(self, project_dir):
+        self.write_cmake(project_dir, 'project(a)\nfind_package(project2)\nfind_package(project3)\n')
+        assert declared_cmake_dependencies(project_dir) == (('project2', 2), ('project3', 3))
+
+    def test_a_command_spanning_several_lines_reports_its_first(self, project_dir):
+        self.write_cmake(project_dir, 'project(a)\nfind_package(\n    project2\n    REQUIRED)\n')
+        assert declared_cmake_dependencies(project_dir) == (('project2', 2),)
+
+    def test_a_line_comment_does_not_shift_the_numbers(self, project_dir):
+        self.write_cmake(project_dir, '# a comment\n# another\nfind_package(project2)\n')
+        assert declared_cmake_dependencies(project_dir) == (('project2', 3),)
+
+    def test_a_bracket_comment_does_not_shift_the_numbers(self, project_dir):
+        # Its line breaks have to survive the stripping.
+        self.write_cmake(project_dir, '#[[\none\ntwo\nthree\n]]\nfind_package(project2)\n')
+        assert declared_cmake_dependencies(project_dir) == (('project2', 6),)
+
+    def test_the_first_command_looking_for_a_package_wins(self, project_dir):
+        self.write_cmake(project_dir, 'find_package(project2)\nfind_package(project2)\n')
+        assert declared_cmake_dependencies(project_dir) == (('project2', 1),)
+
+    def test_absent_file(self, project_dir):
+        assert declared_cmake_dependencies(project_dir) == ()
+
+
+class TestOrigins:
+    """Where `read_project_info` says each dependency came from."""
+
+    def write_colcon_pkg(self, package_dir, **content):
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / 'colcon.pkg').write_text(yaml.dump(content))
+        return package_dir
+
+    def write_cmake(self, package_dir, body):
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / 'CMakeLists.txt').write_text(body)
+        return package_dir
+
+    def test_a_root_colcon_pkg(self, project_dir, write_pkg):
+        write_pkg(**{'name': 'project1', 'build-dependencies': ['project2']})
+
+        origins = read_project_info(project_dir).origins
+
+        assert origins == {'project2': Origin(
+                file=project_dir.resolve() / 'colcon.pkg', key='build-dependencies')}
+
+    def test_a_colcon_pkg_one_level_down(self, project_dir):
+        core = self.write_colcon_pkg(
+                project_dir / 'core', **{'name': 'c', 'test-dependencies': ['project2']})
+
+        origins = read_project_info(project_dir).origins
+
+        assert origins == {'project2': Origin(file=core / 'colcon.pkg', key='test-dependencies')}
+
+    def test_a_root_cmakelists(self, project_dir):
+        self.write_cmake(project_dir, 'project(a)\nfind_package(project2)\n')
+
+        origins = read_project_info(project_dir).origins
+
+        assert origins == {'project2': Origin(file=project_dir.resolve() / 'CMakeLists.txt', line=2)}
+
+    def test_a_cmakelists_one_level_down(self, project_dir):
+        core = self.write_cmake(project_dir / 'core', 'find_package(project2)\n')
+
+        origins = read_project_info(project_dir).origins
+
+        assert origins == {'project2': Origin(file=core / 'CMakeLists.txt', line=1)}
+
+    def test_the_first_package_declaring_a_dependency_wins(self, project_dir):
+        core = self.write_colcon_pkg(project_dir / 'core', name='c', dependencies=['project2'])
+        self.write_colcon_pkg(project_dir / 'tools', name='t', dependencies=['project2'])
+
+        origins = read_project_info(project_dir).origins
+
+        assert origins['project2'].file == core / 'colcon.pkg'
+
+    def test_every_dependency_has_an_origin(self, project_dir):
+        self.write_colcon_pkg(
+                project_dir / 'core',
+                **{'name': 'c', 'dependencies': ['project2'], 'run-dependencies': ['project3']})
+        self.write_colcon_pkg(project_dir / 'tools', name='t', dependencies=['project4'])
+
+        info = read_project_info(project_dir)
+
+        assert set(info.origins) == set(info.dependencies)

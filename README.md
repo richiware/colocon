@@ -12,6 +12,7 @@ paths to `colcon`, and leaves every other decision to `colcon` itself.
 - [Repository layout](#repository-layout)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Diagnosing a project](#diagnosing-a-project)
 - [Dependencies inside another repository](#dependencies-inside-another-repository)
 - [Usage](#usage)
 - [Describing a project](#describing-a-project)
@@ -139,8 +140,10 @@ colocon test
 | Option | Meaning |
 | --- | --- |
 | `-p`, `--project-dir DIR` | Root of the project to build. Defaults to the working directory. |
+| `-d`, `--diagnose` | Print what `colocon` made of the project before carrying on — see [Diagnosing a project](#diagnosing-a-project). |
 
-It must come **before** the verb: everything from the verb onwards belongs to `colcon`.
+They must come **before** the verb: everything from the verb onwards belongs to `colcon`, so `colocon build -d`
+forwards `-d` to `colcon` rather than acting on it.
 
 ### What `colocon` adds
 
@@ -165,6 +168,56 @@ neither `--build-base` nor `--install-base`, and forwards both untouched when yo
 | `2` | An argument or a configuration entry was rejected. |
 | `130` | Interrupted with <kbd>Ctrl</kbd>+<kbd>C</kbd>. |
 | *other* | Whatever `colcon` returned, forwarded unchanged. |
+
+### Diagnosing a project
+
+When a build picks up the wrong version of a dependency, or none at all, `-d` prints everything `colocon`
+worked out — the packages of the project, its dependencies, and the directory each one resolved to — and then
+carries on with the build:
+
+```console
+$ colocon -d build
+nebula  (nebula.repos)
+├─ search paths
+│  ├─ ~/repos
+│  └─ /opt/vendor/repos
+├─ packages (2)
+│  ├─ core   ~/repos/nebula/main/core
+│  └─ tools  ~/repos/nebula/main/tools
+└─ dependencies (6)
+   ├─ quasar            2.3.x   ~/repos/quasar/2.3.x
+   │  └─ core/colcon.pkg (dependencies)
+   ├─ pulsar            master  ~/repos/pulsar/master               (recursive)
+   │  └─ core/colcon.pkg (build-dependencies)
+   ├─ stardust_core     1.0     ~/repos/stardust/1.0/core           (in stardust)
+   │  └─ core/colcon.pkg (build-dependencies)
+   ├─ stardust_missing  1.0     ~/repos/stardust/1.0/absent         (in stardust, not found)
+   │  └─ tools/colcon.pkg (run-dependencies)
+   ├─ project9          master  no worktree under the search paths
+   │  └─ tools/colcon.pkg (test-dependencies)
+   └─ Threads           -       not listed in nebula.repos
+      └─ tools/colcon.pkg (test-dependencies)
+```
+
+Each dependency carries the place it was declared, so a surprising dependency can be traced back to the file
+that asked for it. A `colcon.pkg` names the key — `stardust_core` above is a build dependency of `core` — and a
+`CMakeLists.txt` names the line instead:
+
+```
+   ├─ quasar         2.3.x   ~/repos/quasar/2.3.x
+   │  └─ core/CMakeLists.txt:10
+```
+
+Where a dependency is declared more than once, the first place `colocon` read it is the one shown: within a
+`colcon.pkg` the earliest of `dependencies`, `build-dependencies`, `run-dependencies` and `test-dependencies`,
+and across several packages the first subdirectory in alphabetical order.
+
+Reading the last three dependencies of that tree: `stardust_missing` resolved to a directory that is not there,
+`project9` is pinned in the *repos* file but has no worktree under any search path, and `Threads` is a CMake
+package no repository provides — the expected outcome for a system dependency.
+
+The tree is drawn from the same functions that resolve the paths handed to `colcon`, so it cannot show a
+resolution other than the one that happens.
 
 ## Describing a project
 

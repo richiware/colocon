@@ -2,13 +2,16 @@
 # Licensed under the Apache License, Version 2.0
 
 import json
+import sys
 
 import pytest
 
+from colocon import runner
 from colocon.resolve import ResolvedPaths
 from colocon.runner import (
     COLCON_BUILD_DIR,
     DEFAULT_MIXIN,
+    INTERRUPTED_RETURN_CODE,
     build_argv,
     merge_compile_commands,
     supports_paths,
@@ -135,6 +138,47 @@ class TestMixin:
 
         assert argv[-2:] == ['--mixin', 'debug']
         assert argv.count('--mixin') == 1
+
+
+class TestRunColcon:
+
+    class Stream:
+        """A stdout that records what happens to it."""
+
+        encoding = 'utf-8'
+
+        def __init__(self, events):
+            self.events = events
+
+        def write(self, text):
+            self.events.append('write')
+            return len(text)
+
+        def flush(self):
+            self.events.append('flush')
+
+    def test_output_is_flushed_before_colcon_starts(self, monkeypatch):
+        # colcon writes to the same descriptor, so anything colocon printed
+        # first — the diagnose tree above all — has to be out of the buffer.
+        events = []
+        monkeypatch.setattr(runner.subprocess, 'call', lambda argv: events.append('colcon') or 0)
+        monkeypatch.setattr(sys, 'stdout', self.Stream(events))
+
+        print('printed by colocon')
+        runner.run_colcon(['colcon', 'build'])
+
+        assert events.index('write') < events.index('flush') < events.index('colcon')
+
+    def test_the_exit_code_is_returned(self, monkeypatch):
+        monkeypatch.setattr(runner.subprocess, 'call', lambda argv: 17)
+        assert runner.run_colcon(['colcon', 'build']) == 17
+
+    def test_an_interruption_is_reported(self, monkeypatch):
+        def interrupt(argv):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(runner.subprocess, 'call', interrupt)
+        assert runner.run_colcon(['colcon', 'build']) == INTERRUPTED_RETURN_CODE
 
 
 class TestMergeCompileCommands:

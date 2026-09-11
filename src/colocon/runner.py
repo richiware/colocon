@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -82,6 +83,10 @@ def build_argv(rest: Sequence[str], resolved: ResolvedPaths) -> tuple[list, str]
 
 def run_colcon(argv: Sequence[str]) -> int:
     """Run `argv`, returning its exit code."""
+    # colcon writes to the same descriptors, so whatever colocon has already
+    # printed has to be out of the buffer before it starts.
+    sys.stdout.flush()
+    sys.stderr.flush()
     try:
         return subprocess.call(list(argv))
     except KeyboardInterrupt:

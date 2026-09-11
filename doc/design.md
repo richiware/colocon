@@ -16,6 +16,10 @@ Then `colocon` must search the file `${project_name}.repos` and obtain the depen
 repository: the *repos* file must then be asked about that project instead of the dependency, and the directory
 of its worktree holding the dependency is what must be passed to `colcon`. Without an explicit `path`, the
 directory is the dependency's own name.
+* Must offer a `-d`/`--diagnose` argument, before the verb, printing the packages of the project, its
+dependencies and the directory each one resolved to, and then carrying on. Each dependency must also show where
+it was first declared: the `colcon.pkg` file and the key declaring it, or the `CMakeLists.txt` file and the line
+of the `find_package` command.
 * Must leave the build and install directories to `colcon`. `colocon` must never add `--build-base` nor
 `--install-base`, and must forward them untouched when the user passes them.
 * Must default `--mixin` to `rel-with-deb-info` for the `build` verb, unless the user asks for a mixin.

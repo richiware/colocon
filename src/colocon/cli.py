@@ -8,10 +8,12 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from colocon.config import load_config
 from colocon.resolve import read_project_info, read_repositories, resolve_paths
 from colocon.runner import build_argv, merge_compile_commands, run_colcon
+from colocon.tree import format_tree, glyphs_for
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -22,6 +24,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
             '-p', '--project-dir', default='.',
             help='Root directory of the main project, where its CMakeList.txt will be found.')
+    parser.add_argument(
+            '-d', '--diagnose', action='store_true',
+            help='Print the packages of the project, its dependencies and the path each one resolved to,\
+             before carrying on.')
     parser.add_argument('rest', nargs=argparse.REMAINDER)
     return parser.parse_args(argv)
 
@@ -57,6 +63,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     repositories = read_repositories(options.project_dir, project_info.name)
     resolved = resolve_paths(
             project_info, repositories, config.search_paths, config.dependency_locations)
+    if options.diagnose:
+        print(format_tree(
+                project_info, repositories, config.search_paths, config.dependency_locations,
+                project_dir=Path(options.project_dir).resolve(), glyphs=glyphs_for(sys.stdout)))
+
     for name in resolved.missing:
         print('Cannot find path for ' + name, file=sys.stderr)
 

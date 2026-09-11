@@ -329,12 +329,67 @@ class TestCompileCommands:
         assert 'broken database' in capsys.readouterr().err
 
 
+class TestDiagnose:
+    """`-d` shows what colocon made of the project, then carries on."""
+
+    def test_the_tree_is_printed(self, config, colcon, search_path, write_pkg, write_repos, capsys):
+        config(search_paths=(search_path,))
+        write_repos('project1', {'project2': {'version': '2.x'}})
+        project_dir = write_pkg(name='project1', dependencies=['project2'])
+
+        assert cli.main(['-d', '-p', str(project_dir), 'build']) == 0
+
+        out = capsys.readouterr().out
+        assert 'project1  (project1.repos)' in out
+        assert str(search_path / 'project2' / '2.x') in out
+
+    def test_the_origin_of_each_dependency_is_shown(
+            self, config, colcon, search_path, write_pkg, write_repos, capsys):
+        config(search_paths=(search_path,))
+        write_repos('project1', {'project2': {'version': '2.x'}})
+        project_dir = write_pkg(**{'name': 'project1', 'build-dependencies': ['project2']})
+
+        assert cli.main(['-d', '-p', str(project_dir), 'build']) == 0
+
+        # Relative to the project directory, and naming the key that declared it.
+        assert 'colcon.pkg (build-dependencies)' in capsys.readouterr().out
+
+    def test_colcon_still_runs(self, config, colcon, write_pkg):
+        assert cli.main(['-d', '-p', str(write_pkg(name='project1')), 'build']) == 0
+        assert colcon.calls[0][:2] == ['colcon', 'build']
+
+    def test_nothing_is_printed_without_it(self, config, colcon, write_pkg, capsys):
+        assert cli.main(['-p', str(write_pkg(name='project1')), 'build']) == 0
+        assert capsys.readouterr().out == ''
+
+    def test_a_missing_dependency_is_shown_and_still_warned_about(
+            self, config, colcon, search_path, write_pkg, write_repos, capsys):
+        config(search_paths=(search_path,))
+        write_repos('project1', {'no_worktree': {'version': 'master'}})
+        project_dir = write_pkg(name='project1', dependencies=['no_worktree'])
+
+        assert cli.main(['-d', '-p', str(project_dir), 'build']) == 0
+
+        captured = capsys.readouterr()
+        assert 'no worktree' in captured.out
+        assert 'Cannot find path for no_worktree' in captured.err
+
+
 class TestParseArgs:
 
     def test_defaults(self):
         options = cli.parse_args([])
         assert options.project_dir == '.'
+        assert options.diagnose is False
         assert options.rest == []
+
+    def test_diagnose_flag(self):
+        assert cli.parse_args(['-d', 'build']).diagnose is True
+
+    def test_diagnose_after_the_verb_belongs_to_colcon(self):
+        options = cli.parse_args(['build', '-d'])
+        assert options.diagnose is False
+        assert options.rest == ['build', '-d']
 
     def test_colcon_arguments_are_kept_apart(self):
         options = cli.parse_args(['-p', 'dir', 'build', '--mixin', 'debug'])

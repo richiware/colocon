@@ -52,12 +52,28 @@ class ProjectInfo:
     of every ``colcon.pkg`` read, whatever phase each was declared for, with
     duplicates removed. `package_dirs` are the directories to hand to `colcon`:
     the project directory for a single package project, or one directory per
-    package for a project holding several.
+    package for a project holding several. `origins` says where each dependency
+    was first declared.
     """
 
     name: str
     dependencies: tuple[str, ...] = ()
     package_dirs: tuple[Path, ...] = ()
+    origins: dict[str, Origin] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass(frozen=True)
+class Origin:
+    """Where a dependency was declared.
+
+    `key` is the key of the ``colcon.pkg`` declaring it, and `line` the line of
+    the ``CMakeLists.txt`` looking for it; whichever kind of file `file` is,
+    only one of the two is set.
+    """
+
+    file: Path
+    key: str = ''
+    line: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -96,18 +112,22 @@ class ResolvedPaths:
     missing: tuple[str, ...] = ()
 
 
-def read_dependencies(content: dict) -> tuple[str, ...]:
-    """Gather every dependency declared by a ``colcon.pkg``.
+def declared_dependencies(content: dict) -> tuple[tuple[str, str], ...]:
+    """Gather every dependency declared by a ``colcon.pkg``, with its key.
 
     The keys of `DEPENDENCY_KEYS` are read in order and their contents joined,
     keeping the first mention of a package that several phases ask for.
     """
-    dependencies = []
+    declared: dict[str, str] = {}
     for key in DEPENDENCY_KEYS:
         for dependency in content.get(key) or ():
-            if dependency not in dependencies:
-                dependencies.append(dependency)
-    return tuple(dependencies)
+            declared.setdefault(dependency, key)
+    return tuple(declared.items())
+
+
+def read_dependencies(content: dict) -> tuple[str, ...]:
+    """Gather every dependency declared by a ``colcon.pkg``."""
+    return tuple(dependency for dependency, _key in declared_dependencies(content))
 
 
 def read_colcon_pkg(package_dir: PathLike) -> dict | None:
@@ -127,33 +147,59 @@ def colcon_pkg_dependencies(package_dir: PathLike) -> tuple[str, ...]:
     return read_dependencies(read_colcon_pkg(package_dir) or {})
 
 
+def colcon_pkg_declarations(package_dir: PathLike) -> tuple[tuple[str, Origin], ...]:
+    """Dependencies of the ``colcon.pkg`` of `package_dir`, and where each is."""
+    origin_file = Path(package_dir) / COLCON_PKG
+    return tuple(
+        (dependency, Origin(file=origin_file, key=key))
+        for dependency, key in declared_dependencies(read_colcon_pkg(package_dir) or {})
+    )
+
+
+def cmake_declarations(package_dir: PathLike) -> tuple[tuple[str, Origin], ...]:
+    """Dependencies of the ``CMakeLists.txt`` of `package_dir`, and where each is."""
+    origin_file = Path(package_dir) / CMAKE_LISTS
+    return tuple(
+        (dependency, Origin(file=origin_file, line=line))
+        for dependency, line in declared_cmake_dependencies(package_dir)
+    )
+
+
 def strip_cmake_comments(text: str) -> str:
     """Remove the comments of a CMake listfile.
 
     Both the bracket form and the line form are dropped, so that a command
-    somebody commented out is not read as a dependency.
+    somebody commented out is not read as a dependency. Every line break is
+    kept, a bracket comment's included, so that what is left of the file still
+    numbers its lines as the file does.
     """
-    without_brackets = re.sub(r'#\[\[.*?\]\]', '', text, flags=re.DOTALL)
+    without_brackets = re.sub(
+            r'#\[\[.*?\]\]', lambda comment: '\n' * comment.group().count('\n'), text, flags=re.DOTALL)
     return re.sub(r'#[^\n]*', '', without_brackets)
 
 
-def cmake_dependencies(package_dir: PathLike) -> tuple[str, ...]:
-    """Dependencies the ``CMakeLists.txt`` of `package_dir` looks for.
+def declared_cmake_dependencies(package_dir: PathLike) -> tuple[tuple[str, int], ...]:
+    """Dependencies the ``CMakeLists.txt`` of `package_dir` looks for, and where.
 
     Every package named by a ``find_package`` command counts as a dependency,
-    keeping the first mention of a package looked for more than once. Returns
-    an empty tuple when the directory holds no ``CMakeLists.txt``, as a project
-    without dependencies and one without the file both resolve to nothing.
+    paired with the line of the command, and the first mention is the one kept
+    when a package is looked for more than once. Returns nothing when the
+    directory holds no ``CMakeLists.txt``.
     """
     cmake_path = Path(package_dir) / CMAKE_LISTS
     if not cmake_path.is_file():
         return ()
 
-    dependencies: list[str] = []
-    for name in FIND_PACKAGE.findall(strip_cmake_comments(cmake_path.read_text(errors='replace'))):
-        if name not in dependencies:
-            dependencies.append(name)
-    return tuple(dependencies)
+    text = strip_cmake_comments(cmake_path.read_text(errors='replace'))
+    declared: dict[str, int] = {}
+    for found in FIND_PACKAGE.finditer(text):
+        declared.setdefault(found.group(1), text.count('\n', 0, found.start()) + 1)
+    return tuple(declared.items())
+
+
+def cmake_dependencies(package_dir: PathLike) -> tuple[str, ...]:
+    """Dependencies the ``CMakeLists.txt`` of `package_dir` looks for."""
+    return tuple(dependency for dependency, _line in declared_cmake_dependencies(package_dir))
 
 
 def find_package_dirs(project_dir: PathLike, marker: str) -> tuple[Path, ...]:
@@ -174,7 +220,7 @@ def find_package_dirs(project_dir: PathLike, marker: str) -> tuple[Path, ...]:
 def _project_of(
     root: Path,
     package_dirs: tuple[Path, ...],
-    read: Callable[[PathLike], tuple[str, ...]],
+    read: Callable[[PathLike], tuple[tuple[str, Origin], ...]],
 ) -> ProjectInfo:
     """Describe a project made of `package_dirs`, reading each one with `read`.
 
@@ -182,16 +228,16 @@ def _project_of(
     worktree provides it: the ``<repository>/<worktree>`` layout puts the
     repository name there, and the *repos* file is named after it.
     """
-    dependencies: list[str] = []
+    origins: dict[str, Origin] = {}
     for package_dir in package_dirs:
-        for dependency in read(package_dir):
-            if dependency not in dependencies:
-                dependencies.append(dependency)
+        for dependency, origin in read(package_dir):
+            origins.setdefault(dependency, origin)
 
     return ProjectInfo(
         name=root.parent.name,
-        dependencies=tuple(dependencies),
+        dependencies=tuple(origins),
         package_dirs=package_dirs,
+        origins=origins,
     )
 
 
@@ -218,22 +264,27 @@ def read_project_info(project_dir: PathLike) -> ProjectInfo | None:
         name = content.get('name')
         if not name:
             return None
+        origins = {
+            dependency: Origin(file=root / COLCON_PKG, key=key)
+            for dependency, key in declared_dependencies(content)
+        }
         return ProjectInfo(
             name=name,
-            dependencies=read_dependencies(content),
+            dependencies=tuple(origins),
             package_dirs=(root,),
+            origins=origins,
         )
 
     package_dirs = find_package_dirs(root, COLCON_PKG)
     if package_dirs:
-        return _project_of(root, package_dirs, colcon_pkg_dependencies)
+        return _project_of(root, package_dirs, colcon_pkg_declarations)
 
     if (root / CMAKE_LISTS).is_file():
-        return _project_of(root, (root,), cmake_dependencies)
+        return _project_of(root, (root,), cmake_declarations)
 
     package_dirs = find_package_dirs(root, CMAKE_LISTS)
     if package_dirs:
-        return _project_of(root, package_dirs, cmake_dependencies)
+        return _project_of(root, package_dirs, cmake_declarations)
 
     return None
 
@@ -263,6 +314,19 @@ def read_repositories(project_dir: PathLike, project_name: str) -> dict[str, Rep
     return repositories
 
 
+def dependency_location(dependency: str, locations: Mapping[str, Location] | None = None) -> tuple[str, str]:
+    """The repository `dependency` needs, and the directory wanted from it.
+
+    A dependency is a repository of its own unless `locations` places it inside
+    another one. The directory is relative to the worktree, and empty means the
+    worktree itself.
+    """
+    location = (locations or {}).get(dependency)
+    if location is None:
+        return dependency, ''
+    return location.project, location.path
+
+
 def requested_paths(
     dependencies: Iterable[str],
     locations: Mapping[str, Location] | None = None,
@@ -276,9 +340,7 @@ def requested_paths(
     """
     requested: dict[str, list[str]] = {}
     for dependency in dependencies or ():
-        location = (locations or {}).get(dependency)
-        repository = location.project if location else dependency
-        path = location.path if location else ''
+        repository, path = dependency_location(dependency, locations)
         paths = requested.setdefault(repository, [])
         if path not in paths:
             paths.append(path)
