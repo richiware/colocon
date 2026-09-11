@@ -5,6 +5,9 @@
 `colocon` must obtain the project's name in that directory using the `colcon.pkg`, and its dependencies from
 every dependency key that file supports: `dependencies`, `build-dependencies`, `run-dependencies` and
 `test-dependencies`.
+If that directory has no `colcon.pkg`, `colocon` must search the first level of its subdirectories for
+packages, join the dependencies of every `colcon.pkg` found there, name the project after the directory holding
+the worktree, and pass each package directory to `colcon`.
 Then `colocon` must search the file `${project_name}.repos` and obtain the dependencies and versions.
 * Must leave the build and install directories to `colcon`. `colocon` must never add `--build-base` nor
 `--install-base`, and must forward them untouched when the user passes them.

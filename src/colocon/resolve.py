@@ -32,14 +32,18 @@ PathLike = str | Path
 
 @dataclasses.dataclass(frozen=True)
 class ProjectInfo:
-    """The contents of ``colcon.pkg`` that `colocon` cares about.
+    """What `colocon` needs to know about the project it was asked to build.
 
-    `dependencies` gathers every dependency key of the file, whatever phase it
-    was declared for, with duplicates removed.
+    `name` names the *repos* file. `dependencies` gathers every dependency key
+    of every ``colcon.pkg`` read, whatever phase each was declared for, with
+    duplicates removed. `package_dirs` are the directories to hand to `colcon`:
+    the project directory for a single package project, or one directory per
+    package for a project holding several.
     """
 
     name: str
     dependencies: tuple[str, ...] = ()
+    package_dirs: tuple[Path, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -79,21 +83,75 @@ def read_dependencies(content: dict) -> tuple[str, ...]:
     return tuple(dependencies)
 
 
-def read_project_info(project_dir: PathLike) -> ProjectInfo | None:
-    """Read ``colcon.pkg`` from `project_dir`.
+def read_colcon_pkg(package_dir: PathLike) -> dict | None:
+    """Read the ``colcon.pkg`` of `package_dir`.
 
-    Returns ``None`` when the file is absent or declares no ``name``.
+    Returns ``None`` when the directory holds no such file, and an empty
+    mapping when the file is empty.
     """
-    package_path = Path(project_dir) / 'colcon.pkg'
+    package_path = Path(package_dir) / 'colcon.pkg'
     if not package_path.is_file():
         return None
+    return yaml.safe_load(package_path.read_text()) or {}
 
-    content = yaml.safe_load(package_path.read_text()) or {}
-    name = content.get('name')
-    if not name:
+
+def find_package_dirs(project_dir: PathLike) -> tuple[Path, ...]:
+    """Subdirectories of `project_dir`, one level down, that hold a package.
+
+    Only the first level is looked at: `colcon` crawls whatever is deeper on
+    its own once it is pointed at a package.
+    """
+    root = Path(project_dir)
+    if not root.is_dir():
+        return ()
+    return tuple(sorted(
+        entry for entry in root.iterdir()
+        if entry.is_dir() and (entry / 'colcon.pkg').is_file()
+    ))
+
+
+def read_project_info(project_dir: PathLike) -> ProjectInfo | None:
+    """Describe the project rooted at `project_dir`.
+
+    A ``colcon.pkg`` in `project_dir` describes a project of a single package:
+    its ``name`` names the *repos* file, and its dependency keys are read.
+
+    Without one, the first level of subdirectories is searched for packages and
+    the dependencies of every ``colcon.pkg`` found there are joined. No file
+    states a name then, so the project takes the name of the directory holding
+    the worktree, as the ``<repository>/<worktree>`` layout puts the repository
+    name there.
+
+    Returns ``None`` when no ``colcon.pkg`` is found either way.
+    """
+    root = Path(project_dir).resolve()
+
+    content = read_colcon_pkg(root)
+    if content is not None:
+        name = content.get('name')
+        if not name:
+            return None
+        return ProjectInfo(
+            name=name,
+            dependencies=read_dependencies(content),
+            package_dirs=(root,),
+        )
+
+    package_dirs = find_package_dirs(root)
+    if not package_dirs:
         return None
 
-    return ProjectInfo(name=name, dependencies=read_dependencies(content))
+    dependencies: list[str] = []
+    for package_dir in package_dirs:
+        for dependency in read_dependencies(read_colcon_pkg(package_dir) or {}):
+            if dependency not in dependencies:
+                dependencies.append(dependency)
+
+    return ProjectInfo(
+        name=root.parent.name,
+        dependencies=tuple(dependencies),
+        package_dirs=package_dirs,
+    )
 
 
 def read_repositories(project_dir: PathLike, project_name: str) -> dict[str, Repository]:
@@ -153,7 +211,6 @@ def find_worktree(repository: Repository, search_paths: Iterable[PathLike]) -> P
 
 
 def resolve_paths(
-    project_dir: PathLike,
     project_info: ProjectInfo,
     repositories: dict[str, Repository],
     search_paths: Iterable[PathLike],
@@ -175,7 +232,7 @@ def resolve_paths(
         else:
             paths.append(str(worktree))
 
-    paths.append(str(Path(project_dir).resolve()))
+    paths += [str(package_dir) for package_dir in project_info.package_dirs]
 
     return ResolvedPaths(
         paths=tuple(paths),

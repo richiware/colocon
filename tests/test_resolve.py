@@ -4,12 +4,14 @@
 import shutil
 
 import pytest
+import yaml
 
 from colocon.resolve import (
     DEFAULT_VERSION,
     DEPENDENCY_KEYS,
     ProjectInfo,
     Repository,
+    find_package_dirs,
     find_worktree,
     read_project_info,
     read_repositories,
@@ -34,11 +36,23 @@ class TestReadProjectInfo:
         assert read_project_info(project_dir) is None
 
     def test_without_dependencies(self, write_pkg):
-        assert read_project_info(write_pkg(name='project1')) == ProjectInfo(name='project1', dependencies=())
+        project_dir = write_pkg(name='project1')
+        assert read_project_info(project_dir) == ProjectInfo(
+                name='project1', dependencies=(), package_dirs=(project_dir.resolve(),))
 
     def test_with_dependencies(self, write_pkg):
-        info = read_project_info(write_pkg(name='project1', dependencies=['project2', 'project3']))
-        assert info == ProjectInfo(name='project1', dependencies=('project2', 'project3'))
+        project_dir = write_pkg(name='project1', dependencies=['project2', 'project3'])
+        info = read_project_info(project_dir)
+        assert info == ProjectInfo(
+                name='project1',
+                dependencies=('project2', 'project3'),
+                package_dirs=(project_dir.resolve(),))
+
+    def test_relative_project_dir_becomes_absolute(self, monkeypatch, write_pkg):
+        project_dir = write_pkg(name='project1')
+        monkeypatch.chdir(project_dir)
+
+        assert read_project_info('.').package_dirs == (project_dir.resolve(),)
 
 
 class TestDependencyKeys:
@@ -97,6 +111,85 @@ class TestDependencyKeys:
         })
 
         assert read_project_info(project_dir).dependencies == ('project2',)
+
+
+class TestPackagesInSubdirectories:
+    """Without a `colcon.pkg` of its own, a project is a set of packages."""
+
+    def write_package(self, project_dir, subdirectory, **content):
+        package_dir = project_dir / subdirectory
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / 'colcon.pkg').write_text(yaml.dump(content))
+        return package_dir
+
+    def test_finds_packages_one_level_down(self, project_dir):
+        core = self.write_package(project_dir, 'core', name='project1_core')
+        tools = self.write_package(project_dir, 'tools', name='project1_tools')
+
+        assert find_package_dirs(project_dir) == (core, tools)
+
+    def test_ignores_a_subdirectory_without_a_package(self, project_dir):
+        core = self.write_package(project_dir, 'core', name='project1_core')
+        (project_dir / 'docs').mkdir()
+
+        assert find_package_dirs(project_dir) == (core,)
+
+    def test_ignores_deeper_levels(self, project_dir):
+        # colcon crawls deeper on its own once pointed at a package.
+        self.write_package(project_dir, 'core/nested', name='nested')
+
+        assert find_package_dirs(project_dir) == ()
+
+    def test_absent_directory(self, tmp_path):
+        assert find_package_dirs(tmp_path / 'absent') == ()
+
+    def test_dependencies_of_every_package_are_joined(self, project_dir):
+        self.write_package(project_dir, 'core', name='project1_core', dependencies=['project2'])
+        self.write_package(project_dir, 'tools', name='project1_tools',
+                           **{'test-dependencies': ['project3']})
+
+        info = read_project_info(project_dir)
+
+        assert info.dependencies == ('project2', 'project3')
+
+    def test_a_dependency_of_several_packages_is_kept_once(self, project_dir):
+        self.write_package(project_dir, 'core', name='project1_core', dependencies=['project2'])
+        self.write_package(project_dir, 'tools', name='project1_tools', dependencies=['project2', 'project3'])
+
+        assert read_project_info(project_dir).dependencies == ('project2', 'project3')
+
+    def test_every_package_is_handed_to_colcon(self, project_dir):
+        core = self.write_package(project_dir, 'core', name='project1_core')
+        tools = self.write_package(project_dir, 'tools', name='project1_tools')
+
+        # `--paths` does not recurse, so each package needs its own path.
+        assert read_project_info(project_dir).package_dirs == (core, tools)
+
+    def test_project_is_named_after_the_repository_directory(self, project_dir):
+        # project_dir is `<tmp>/project1/main`, so the repos file is project1.repos.
+        self.write_package(project_dir, 'core', name='project1_core')
+
+        assert read_project_info(project_dir).name == 'project1'
+
+    def test_a_package_without_dependencies(self, project_dir):
+        self.write_package(project_dir, 'core', name='project1_core')
+
+        assert read_project_info(project_dir).dependencies == ()
+
+    def test_no_package_anywhere(self, project_dir):
+        (project_dir / 'docs').mkdir()
+
+        assert read_project_info(project_dir) is None
+
+    def test_a_root_package_wins_over_the_subdirectories(self, project_dir, write_pkg):
+        self.write_package(project_dir, 'core', name='project1_core', dependencies=['project3'])
+        write_pkg(name='project1', dependencies=['project2'])
+
+        info = read_project_info(project_dir)
+
+        assert info.name == 'project1'
+        assert info.dependencies == ('project2',)
+        assert info.package_dirs == (project_dir.resolve(),)
 
 
 class TestReadRepositories:
@@ -207,31 +300,24 @@ class TestResolvePaths:
         return repositories
 
     def test_splits_recursive_dependencies(self, project_dir, search_path):
-        info = ProjectInfo(name='project1', dependencies=('project2', 'project4'))
-        resolved = resolve_paths(project_dir, info, self.repositories(), [search_path])
+        info = ProjectInfo(name='project1', dependencies=('project2', 'project4'), package_dirs=(project_dir,))
+        resolved = resolve_paths(info, self.repositories(), [search_path])
 
         assert resolved.paths == (str(search_path / 'project2' / '2.x'), str(project_dir))
         assert resolved.recursive_paths == (str(search_path / 'project4' / '4.x'),)
 
     def test_reports_missing_dependencies(self, project_dir, search_path):
-        info = ProjectInfo(name='project1', dependencies=('project2', UNKNOWN_PROJECT))
-        resolved = resolve_paths(project_dir, info, self.repositories(), [search_path])
+        info = ProjectInfo(name='project1', dependencies=('project2', UNKNOWN_PROJECT), package_dirs=(project_dir,))
+        resolved = resolve_paths(info, self.repositories(), [search_path])
 
         assert resolved.missing == (UNKNOWN_PROJECT,)
         assert str(search_path / UNKNOWN_PROJECT) not in resolved.paths
 
     def test_project_is_always_the_last_path(self, project_dir, search_path):
-        info = ProjectInfo(name='project1', dependencies=('project2',))
-        resolved = resolve_paths(project_dir, info, self.repositories(), [search_path])
+        info = ProjectInfo(name='project1', dependencies=('project2',), package_dirs=(project_dir,))
+        resolved = resolve_paths(info, self.repositories(), [search_path])
 
         assert resolved.paths[-1] == str(project_dir)
-
-    def test_project_path_is_absolute(self, monkeypatch, project_dir, search_path):
-        monkeypatch.chdir(project_dir)
-        info = ProjectInfo(name='project1', dependencies=())
-        resolved = resolve_paths('.', info, {}, [search_path])
-
-        assert resolved.paths == (str(project_dir.resolve()),)
 
 
 
@@ -250,15 +336,15 @@ class TestDependencyChain:
     }
 
     def test_whole_chain_declared_by_the_root_project(self, chain, project_dir, search_path):
-        info = ProjectInfo(name='project1', dependencies=('project2', 'project3'))
-        resolved = resolve_paths(project_dir, info, self.REPOSITORIES, [search_path])
+        info = ProjectInfo(name='project1', dependencies=('project2', 'project3'), package_dirs=(project_dir,))
+        resolved = resolve_paths(info, self.REPOSITORIES, [search_path])
 
         assert resolved.paths == (str(chain.project2), str(chain.project3), str(project_dir))
         assert resolved.missing == ()
 
     def test_every_level_uses_its_own_version(self, chain, project_dir, search_path):
-        info = ProjectInfo(name='project1', dependencies=('project2', 'project3'))
-        resolved = resolve_paths(project_dir, info, self.REPOSITORIES, [search_path])
+        info = ProjectInfo(name='project1', dependencies=('project2', 'project3'), package_dirs=(project_dir,))
+        resolved = resolve_paths(info, self.REPOSITORIES, [search_path])
 
         # Both projects also have a `master` worktree, which must not be taken.
         assert resolved.paths[:2] == (str(chain.project2), str(chain.project3))
@@ -267,8 +353,8 @@ class TestDependencyChain:
     def test_indirect_level_is_left_to_colcon(self, chain, project_dir, search_path):
         # project1 declares only project2; project3 is project2's own
         # dependency, and `colocon` does not read project2's `colcon.pkg`.
-        info = ProjectInfo(name='project1', dependencies=('project2',))
-        resolved = resolve_paths(project_dir, info, self.REPOSITORIES, [search_path])
+        info = ProjectInfo(name='project1', dependencies=('project2',), package_dirs=(project_dir,))
+        resolved = resolve_paths(info, self.REPOSITORIES, [search_path])
 
         assert resolved.paths == (str(chain.project2), str(project_dir))
         assert str(chain.project3) not in resolved.paths
@@ -277,8 +363,8 @@ class TestDependencyChain:
 
     def test_a_middle_level_can_be_recursive(self, chain, project_dir, search_path):
         repositories = dict(self.REPOSITORIES, project2=Repository(name='project2', version='2.x', recursive=True))
-        info = ProjectInfo(name='project1', dependencies=('project2', 'project3'))
-        resolved = resolve_paths(project_dir, info, repositories, [search_path])
+        info = ProjectInfo(name='project1', dependencies=('project2', 'project3'), package_dirs=(project_dir,))
+        resolved = resolve_paths(info, repositories, [search_path])
 
         assert resolved.recursive_paths == (str(chain.project2),)
         assert resolved.paths == (str(chain.project3), str(project_dir))
@@ -286,8 +372,11 @@ class TestDependencyChain:
     def test_a_broken_level_does_not_hide_the_others(self, chain, project_dir, search_path):
         repositories = dict(self.REPOSITORIES)
         repositories[UNKNOWN_PROJECT] = Repository(name=UNKNOWN_PROJECT, version='master')
-        info = ProjectInfo(name='project1', dependencies=('project2', UNKNOWN_PROJECT, 'project3'))
-        resolved = resolve_paths(project_dir, info, repositories, [search_path])
+        info = ProjectInfo(
+                name='project1',
+                dependencies=('project2', UNKNOWN_PROJECT, 'project3'),
+                package_dirs=(project_dir,))
+        resolved = resolve_paths(info, repositories, [search_path])
 
         assert resolved.missing == (UNKNOWN_PROJECT,)
         assert resolved.paths == (str(chain.project2), str(chain.project3), str(project_dir))
@@ -299,7 +388,7 @@ class TestDependencyChain:
         shutil.move(str(search_path / 'project3'), str(other / 'project3'))
         moved = other / 'project3' / '3.x'
 
-        info = ProjectInfo(name='project1', dependencies=('project2', 'project3'))
-        resolved = resolve_paths(project_dir, info, self.REPOSITORIES, [search_path, other])
+        info = ProjectInfo(name='project1', dependencies=('project2', 'project3'), package_dirs=(project_dir,))
+        resolved = resolve_paths(info, self.REPOSITORIES, [search_path, other])
 
         assert resolved.paths == (str(chain.project2), str(moved), str(project_dir))

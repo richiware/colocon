@@ -46,11 +46,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     project_info = read_project_info(options.project_dir)
     if project_info is None:
-        print('Cannot get info from colcon.pkg', file=sys.stderr)
+        print('Cannot get info from a colcon.pkg, in the project directory or its subdirectories',
+              file=sys.stderr)
         return 1
 
     repositories = read_repositories(options.project_dir, project_info.name)
-    resolved = resolve_paths(options.project_dir, project_info, repositories, config.search_paths)
+    resolved = resolve_paths(project_info, repositories, config.search_paths)
     for name in resolved.missing:
         print('Cannot find path for ' + name, file=sys.stderr)
 

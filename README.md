@@ -14,6 +14,7 @@ paths to `colcon`, and leaves every other decision to `colcon` itself.
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [Describing a project](#describing-a-project)
+- [Projects of several packages](#projects-of-several-packages)
 - [How dependencies are resolved](#how-dependencies-are-resolved)
 - [Compilation database](#compilation-database)
 - [Development](#development)
@@ -121,7 +122,7 @@ neither `--build-base` nor `--install-base`, and forwards both untouched when yo
 
 ## Describing a project
 
-Two files in the project's worktree drive the resolution.
+The files in the project's worktree drive the resolution.
 
 ### `colcon.pkg`
 
@@ -179,15 +180,50 @@ repositories:
 > **Quote numeric versions.** YAML resolves an unquoted `1.10` to the number `1.1`, and the worktree is then
 > looked up under the wrong name. Write `version: "1.10"`.
 
+### Projects of several packages
+
+A repository often holds more than one package, with no package at its root. When the project directory has no
+`colcon.pkg`, `colocon` looks one level down for directories that do, and treats them as the project:
+
+```
+~/repos/nebula/main/
+├── nebula.repos
+├── core/
+│   └── colcon.pkg      name: nebula_core,  dependencies: [quasar]
+├── tools/
+│   └── colcon.pkg      name: nebula_tools, test-dependencies: [pulsar]
+└── docs/               no colcon.pkg, ignored
+```
+
+The dependencies of every package found are joined, and each package directory is passed to `colcon` — `--paths`
+does not recurse, so a single path to the project directory would find nothing:
+
+```console
+$ colocon build
+colcon build --paths ~/repos/quasar/2.3.x ~/repos/pulsar/master \
+             ~/repos/nebula/main/core ~/repos/nebula/main/tools --mixin rel-with-deb-info
+```
+
+Two details are worth knowing:
+
+- **Only the first level is searched.** A package nested deeper is not found, since `colcon` crawls further on
+  its own once it is pointed at a package directory.
+- **The *repos* file is named after the repository directory.** No `colcon.pkg` states a project name here, so
+  `colocon` takes it from the directory holding the worktree: under `~/repos/nebula/main` it reads
+  `nebula.repos`.
+
+A `colcon.pkg` in the project directory always wins: the subdirectories are searched only in its absence.
+
 ## How dependencies are resolved
 
-1. Read `name` and the dependency keys from `colcon.pkg`.
+1. Read `name` and the dependency keys from `colcon.pkg`, or from the packages one level down when the project
+   has no `colcon.pkg` of its own — see [Projects of several packages](#projects-of-several-packages).
 2. Read the `repositories` of `<name>.repos`.
 3. Join the two: a repository is selected when the project declares it as a dependency, so a *repos* file may
    pin versions for more repositories than a given project needs.
 4. For each selected repository, look for the first of these that exists, across the search paths in order:
    `<search-path>/<name>/<version>`, then `<search-path>/<name>/master`.
-5. Pass what was found to `colcon`, together with the project directory.
+5. Pass what was found to `colcon`, together with the project's own package directories.
 
 A dependency whose worktree cannot be found is reported on stderr and skipped — the build still runs, and
 `colcon` fails later if the dependency was really needed.

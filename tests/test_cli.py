@@ -2,10 +2,21 @@
 # Licensed under the Apache License, Version 2.0
 
 import pytest
+import yaml
 
 from colocon import cli
 from colocon.config import Config
 from colocon.runner import COLCON_BUILD_DIR
+
+
+def option_values(argv, name):
+    """Return the values following `name` in `argv`, up to the next option."""
+    values = []
+    for argument in argv[argv.index(name) + 1:]:
+        if argument.startswith('--'):
+            break
+        values.append(argument)
+    return values
 
 
 @pytest.fixture
@@ -137,6 +148,51 @@ class TestDependencyChain:
         argv = colcon.calls[0]
         assert argv[argv.index('--base-paths') + 1] == str(chain.project2)
         assert str(chain.project3) in argv
+
+
+class TestPackagesInSubdirectories:
+    """A project with no `colcon.pkg` of its own, holding several packages."""
+
+    def write_package(self, project_dir, subdirectory, **content):
+        package_dir = project_dir / subdirectory
+        package_dir.mkdir(parents=True, exist_ok=True)
+        (package_dir / 'colcon.pkg').write_text(yaml.dump(content))
+        return package_dir
+
+    def test_every_package_and_dependency_reaches_colcon(
+            self, config, colcon, search_path, project_dir, write_repos):
+        config(search_paths=(search_path,))
+        write_repos('project1', {'project2': {'version': '2.x'}, 'project3': {'version': '3.x'}})
+        core = self.write_package(project_dir, 'core', name='project1_core', dependencies=['project2'])
+        tools = self.write_package(project_dir, 'tools', name='project1_tools',
+                                   **{'test-dependencies': ['project3']})
+
+        assert cli.main(['-p', str(project_dir), 'build']) == 0
+
+        assert option_values(colcon.calls[0], '--paths') == [
+            str(search_path / 'project2' / '2.x'),
+            str(search_path / 'project3' / '3.x'),
+            str(core),
+            str(tools),
+        ]
+
+    def test_repos_file_is_found_by_the_repository_name(
+            self, config, colcon, search_path, project_dir, write_repos):
+        # No colcon.pkg states a name, so `project1.repos` is used: the
+        # project directory is `<tmp>/project1/main`.
+        config(search_paths=(search_path,))
+        write_repos('project1', {'project2': {'version': '2.x'}})
+        self.write_package(project_dir, 'core', name='project1_core', dependencies=['project2'])
+
+        assert cli.main(['-p', str(project_dir), 'build']) == 0
+        assert str(search_path / 'project2' / '2.x') in colcon.calls[0]
+
+    def test_no_package_at_all_is_an_error(self, config, colcon, project_dir, capsys):
+        (project_dir / 'docs').mkdir()
+
+        assert cli.main(['-p', str(project_dir), 'build']) == 1
+        assert 'colcon.pkg' in capsys.readouterr().err
+        assert colcon.calls == []
 
 
 class TestCompileCommands:
