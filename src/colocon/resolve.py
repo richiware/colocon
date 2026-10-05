@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 
 import yaml
@@ -102,7 +102,13 @@ class Location:
 
 @dataclasses.dataclass(frozen=True)
 class Repository:
-    """One entry of the ``repositories`` mapping of a *repos* file."""
+    """One entry of the ``repositories`` mapping of a *repos* file.
+
+    `recursive` is the one thing not read from that file: which repositories
+    hold more than one package is a fact about a developer's workspace, not
+    about a file that is shared and often theirs only to read, so the
+    configuration file says it and `mark_recursive` puts it here.
+    """
 
     name: str
     version: str = DEFAULT_VERSION
@@ -379,9 +385,25 @@ def read_repositories(project_dir: PathLike, project_name: str) -> dict[str, Rep
         repositories[name] = Repository(
             name=name,
             version=str(version) if version else DEFAULT_VERSION,
-            recursive=bool(spec.get('recursive')),
         )
     return repositories
+
+
+def mark_recursive(
+    repositories: Mapping[str, Repository],
+    recursive_projects: Collection[str] = (),
+) -> dict[str, Repository]:
+    """Flag the repositories whose worktree `colcon` is to crawl.
+
+    A flagged repository reaches `colcon` through ``--base-paths`` rather than
+    ``--paths``, so that every package of its worktree is found. A name no
+    *repos* file of this project mentions is simply of no use here: the
+    configuration is written once for every project a developer has.
+    """
+    return {
+        name: (dataclasses.replace(repository, recursive=True) if name in recursive_projects else repository)
+        for name, repository in repositories.items()
+    }
 
 
 def dependency_location(dependency: str, locations: Mapping[str, Location] | None = None) -> tuple[str, str]:

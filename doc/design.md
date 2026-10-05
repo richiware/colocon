@@ -26,6 +26,9 @@ of the `find_package` command.
 worktree must be read as the project is, and whatever it declares becomes a dependency too. The project's own
 *repos* file must decide every version, and a dependency already found must never be followed again, so that a
 chain leading back on itself terminates.
+* Must take the repositories whose worktree holds several packages from the `recursive-projects` list of the
+configuration file, and pass each of them to `colcon` through `--base-paths` rather than `--paths`. A `recursive`
+tag in a *repos* file must not be read.
 * Must leave the build and install directories to `colcon`. `colocon` must never add `--build-base` nor
 `--install-base`, and must forward them untouched when the user passes them.
 * Must default `--mixin` to `rel-with-deb-info` for the `build` verb, unless the user asks for a mixin.

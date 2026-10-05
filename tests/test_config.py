@@ -180,3 +180,49 @@ class TestDependencyLocations:
                     project: stardust
                     path: /opt/stardust
                 """)
+
+
+class TestRecursiveProjects:
+    """Repositories whose worktree holds more than one package."""
+
+    def load(self, tmp_path, body):
+        config_path = tmp_path / 'colocon.yaml'
+        config_path.write_text(body)
+        return load_config(config_path)
+
+    def test_absent_key(self, tmp_path):
+        assert self.load(tmp_path, 'search-paths: ["/a"]\n').recursive_projects == frozenset()
+
+    def test_an_empty_list(self, tmp_path):
+        assert self.load(tmp_path, 'recursive-projects: []\n').recursive_projects == frozenset()
+
+    def test_the_named_projects_are_read(self, tmp_path):
+        config = self.load(tmp_path, """
+            recursive-projects:
+              - project2
+              - project3
+            """)
+
+        assert config.recursive_projects == frozenset({'project2', 'project3'})
+
+    def test_a_name_repeated_is_kept_once(self, tmp_path):
+        config = self.load(tmp_path, 'recursive-projects: [project2, project2]\n')
+
+        assert config.recursive_projects == frozenset({'project2'})
+
+    def test_a_bare_name_is_rejected(self, tmp_path):
+        # A list is wanted, even of one.
+        with pytest.raises(ValueError, match='list of project names'):
+            self.load(tmp_path, 'recursive-projects: project2\n')
+
+    def test_a_mapping_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match='list of project names'):
+            self.load(tmp_path, 'recursive-projects:\n  project2: true\n')
+
+    def test_an_entry_that_is_not_a_name(self, tmp_path):
+        with pytest.raises(ValueError, match='is not a project name'):
+            self.load(tmp_path, 'recursive-projects:\n  - 2\n')
+
+    def test_an_empty_entry(self, tmp_path):
+        with pytest.raises(ValueError, match='is not a project name'):
+            self.load(tmp_path, 'recursive-projects:\n  - ""\n')

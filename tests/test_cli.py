@@ -153,11 +153,8 @@ class TestDependencyChain:
 
     def test_recursive_level_uses_base_paths(
             self, config, colcon, chain, search_path, write_pkg, write_repos):
-        config(search_paths=(search_path,))
-        write_repos('project1', {
-            'project2': {'version': '2.x', 'recursive': True},
-            'project3': {'version': '3.x'},
-        })
+        config(search_paths=(search_path,), recursive_projects=frozenset({'project2'}))
+        write_repos('project1', self.REPOS)
         project_dir = write_pkg(name='project1', dependencies=['project2', 'project3'])
 
         assert cli.main(['-p', str(project_dir), 'build']) == 0

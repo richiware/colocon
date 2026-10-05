@@ -14,6 +14,7 @@ paths to `colcon`, and leaves every other decision to `colcon` itself.
 - [Configuration](#configuration)
 - [Diagnosing a project](#diagnosing-a-project)
 - [Dependencies inside another repository](#dependencies-inside-another-repository)
+- [Repositories holding several packages](#repositories-holding-several-packages)
 - [Usage](#usage)
 - [Describing a project](#describing-a-project)
 - [Projects of several packages](#projects-of-several-packages)
@@ -74,6 +75,7 @@ compile_commands: true
 | `search-paths` | list of paths | empty | Where to look for dependency repositories, in order. |
 | `compile_commands` | boolean | `false` | Join every `compile_commands.json` after a successful build. |
 | `dependency-locations` | mapping | empty | Dependencies that live inside another repository — see below. |
+| `recursive-projects` | list of names | empty | Repositories whose worktree holds several packages — see below. |
 
 A search path may start with `~`, which is expanded to your home directory. Environment variables are **not**
 expanded, so a path such as `$HOME/repos` silently matches nothing — write `~/repos` instead. A missing or empty
@@ -117,10 +119,29 @@ A few details follow from that:
 
 - **One worktree, several directories.** Each mapped dependency contributes its own path, and a directory asked
   for twice is passed once.
-- **The repository's `recursive` flag still decides** whether a path goes to `--paths` or `--base-paths`.
+- **Whether a path goes to `--paths` or `--base-paths`** is still decided by the repository, through
+  [`recursive-projects`](#repositories-holding-several-packages).
 - **A directory that does not exist is reported** as `<project>/<path>`, which names both what was looked for
   and where.
 - **A malformed entry is refused** before anything is built, with exit code `2`.
+
+### Repositories holding several packages
+
+`colcon` is told about a dependency by being handed its directory, which it takes for one package. That is
+wrong for a repository whose worktree holds several, and `recursive-projects` names those:
+
+```yaml
+recursive-projects:
+  - stardust
+  - ddspipe
+```
+
+Such a repository reaches `colcon` through `--base-paths` instead, so that its worktree is crawled and every
+package in it found. The names are those of the repositories, as a *repos* file keys them.
+
+The list is read once for every project, which is the point of it being here: a *repos* file is shared, often
+upstream, and rarely yours to edit, whereas which repositories hold several packages is a fact about your
+workspace. A name no *repos* file of the project at hand mentions is simply of no use to it.
 
 ## Usage
 
@@ -152,7 +173,7 @@ For the `build`, `test` and `graph` verbs:
 | Argument | Value |
 | --- | --- |
 | `--paths` | The worktree of each resolved dependency, and the project directory itself last. |
-| `--base-paths` | The worktree of each dependency marked `recursive`. |
+| `--base-paths` | The worktree of each dependency whose repository is listed in `recursive-projects`. |
 
 For `build` only, `--mixin rel-with-deb-info` is added unless you pass a `--mixin` of your own.
 
@@ -270,13 +291,14 @@ repositories:
     type: git
     url: git@github.com:example/stardust.git
     version: "1.0"
-    recursive: true
 ```
 
 | Key | Meaning |
 | --- | --- |
 | `version` | Worktree to build this dependency from. Defaults to `master`. |
-| `recursive` | `colocon` extension. Pass this repository through `--base-paths`, so `colcon` searches it recursively for packages. Useful for a repository holding several packages. |
+
+A *repos* file is a plain vcstool file, and `colocon` reads nothing of its own from it. Which repositories hold
+more than one package is said by [`recursive-projects`](#repositories-holding-several-packages) instead.
 
 > **Quote numeric versions.** YAML resolves an unquoted `1.10` to the number `1.1`, and the worktree is then
 > looked up under the wrong name. Write `version: "1.10"`.

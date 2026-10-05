@@ -21,6 +21,7 @@ from colocon.resolve import (
     expand_dependencies,
     find_package_dirs,
     find_worktree,
+    mark_recursive,
     read_project_info,
     read_repositories,
     requested_paths,
@@ -402,13 +403,15 @@ class TestReadRepositories:
         (project_dir / 'project1.repos').write_text('repositories:\n  project2:\n    version: 1.0\n')
         assert read_repositories(project_dir, 'project1')['project2'].version == '1.0'
 
-    def test_recursive_flag(self, project_dir, write_repos):
+    def test_a_recursive_key_is_not_read(self, project_dir, write_repos):
+        # Which repositories are crawled is said by the configuration file; a
+        # repos file saying it too is of no interest.
         write_repos('project1', {
             'project2': {'version': '2.x', 'recursive': True},
             'project3': {'version': '3.x'},
         })
         repositories = read_repositories(project_dir, 'project1')
-        assert repositories['project2'].recursive is True
+        assert repositories['project2'].recursive is False
         assert repositories['project3'].recursive is False
 
 
@@ -1177,3 +1180,42 @@ class TestExpandDependencies:
 
     def test_without_dependencies(self, project_dir, search_path):
         assert self.expand(self.info(project_dir), search_path).dependencies == ()
+
+
+class TestMarkRecursive:
+    """Flagging the repositories whose worktree `colcon` is to crawl."""
+
+    REPOSITORIES = {
+        'project2': Repository(name='project2', version='2.x'),
+        'project3': Repository(name='project3', version='3.x'),
+    }
+
+    def test_without_any(self):
+        assert mark_recursive(self.REPOSITORIES) == self.REPOSITORIES
+
+    def test_a_named_repository_is_flagged(self):
+        marked = mark_recursive(self.REPOSITORIES, {'project2'})
+
+        assert marked['project2'].recursive is True
+        assert marked['project3'].recursive is False
+
+    def test_several_named_repositories(self):
+        marked = mark_recursive(self.REPOSITORIES, {'project2', 'project3'})
+
+        assert all(repository.recursive for repository in marked.values())
+
+    def test_a_name_no_repos_file_mentions_is_harmless(self):
+        marked = mark_recursive(self.REPOSITORIES, {UNKNOWN_PROJECT})
+
+        assert list(marked) == ['project2', 'project3']
+        assert not any(repository.recursive for repository in marked.values())
+
+    def test_nothing_else_about_a_repository_changes(self):
+        marked = mark_recursive(self.REPOSITORIES, {'project2'})
+
+        assert marked['project2'] == Repository(name='project2', version='2.x', recursive=True)
+
+    def test_the_repositories_given_are_left_alone(self):
+        mark_recursive(self.REPOSITORIES, {'project2'})
+
+        assert self.REPOSITORIES['project2'].recursive is False

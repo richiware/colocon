@@ -17,6 +17,9 @@ DEFAULTS_PATH = Path('.colcon') / 'colocon.yaml'
 #: Key holding the dependencies that live inside another repository.
 LOCATIONS_KEY = 'dependency-locations'
 
+#: Key holding the repositories whose worktree holds more than one package.
+RECURSIVE_KEY = 'recursive-projects'
+
 
 @dataclasses.dataclass(frozen=True)
 class Config:
@@ -25,6 +28,7 @@ class Config:
     search_paths: tuple[Path, ...] = ()
     compile_commands: bool = False
     dependency_locations: dict[str, Location] = dataclasses.field(default_factory=dict)
+    recursive_projects: frozenset[str] = frozenset()
 
 
 def default_config_path() -> Path:
@@ -69,6 +73,27 @@ def read_locations(content: dict) -> dict[str, Location]:
     return locations
 
 
+def read_recursive_projects(content: dict) -> frozenset[str]:
+    """Read the ``recursive-projects`` list of a configuration file.
+
+    These are the repositories whose worktree `colcon` is to crawl for the
+    packages it holds, rather than take for a package of its own.
+
+    Raises `ValueError` on anything that is not a list of names.
+    """
+    projects = content.get(RECURSIVE_KEY)
+    if projects is None:
+        return frozenset()
+
+    if not isinstance(projects, list):
+        raise ValueError(f'{RECURSIVE_KEY}: must be a list of project names')
+    for project in projects:
+        if not isinstance(project, str) or not project:
+            raise ValueError(f'{RECURSIVE_KEY}: {project!r} is not a project name')
+
+    return frozenset(projects)
+
+
 def load_config(path: str | Path | None = None) -> Config:
     """Load the configuration from `path`, falling back to the user's file.
 
@@ -88,4 +113,5 @@ def load_config(path: str | Path | None = None) -> Config:
         search_paths=tuple(Path(search_path).expanduser() for search_path in content.get('search-paths') or ()),
         compile_commands=bool(content.get('compile_commands', False)),
         dependency_locations=read_locations(content),
+        recursive_projects=read_recursive_projects(content),
     )

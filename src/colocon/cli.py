@@ -11,7 +11,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from colocon.config import load_config
-from colocon.resolve import expand_dependencies, read_project_info, read_repositories, resolve_paths
+from colocon.resolve import (
+    expand_dependencies,
+    mark_recursive,
+    read_project_info,
+    read_repositories,
+    resolve_paths,
+)
 from colocon.runner import build_argv, merge_compile_commands, run_colcon
 from colocon.tree import format_tree, glyphs_for
 
@@ -61,6 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     repositories = read_repositories(options.project_dir, project_info.name)
+    repositories = mark_recursive(repositories, config.recursive_projects)
     project_info = expand_dependencies(
             project_info, repositories, config.search_paths, config.dependency_locations)
     resolved = resolve_paths(
