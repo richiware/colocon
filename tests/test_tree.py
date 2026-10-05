@@ -76,8 +76,8 @@ class TestFormatTree:
         text = format_tree(packages, {}, [])
 
         assert 'packages (2)' in text
-        assert str(project_dir / 'core') in text
-        assert str(project_dir / 'tools') in text
+        assert contract(project_dir / 'core') in text
+        assert contract(project_dir / 'tools') in text
 
     def test_a_project_without_dependencies(self, project_dir):
         text = format_tree(info(project_dir), {}, [])
@@ -89,7 +89,7 @@ class TestFormatTree:
 
         text = format_tree(info(project_dir, 'project2'), repositories, [search_path])
 
-        assert str(search_path / 'project2' / '2.x') in row_of(text, 'project2')
+        assert contract(search_path / 'project2' / '2.x') in row_of(text, 'project2')
         assert '2.x' in row_of(text, 'project2')
 
     def test_a_recursive_dependency_is_marked(self, project_dir, search_path):
@@ -107,7 +107,7 @@ class TestFormatTree:
         text = format_tree(info(project_dir, 'project2_core'), repositories, [search_path], locations)
 
         row = row_of(text, 'project2_core')
-        assert str(search_path / 'project2' / '2.x' / 'core') in row
+        assert contract(search_path / 'project2' / '2.x' / 'core') in row
         assert '(in project2)' in row
 
     def test_a_directory_that_is_not_there(self, project_dir, search_path):
@@ -117,7 +117,7 @@ class TestFormatTree:
         text = format_tree(info(project_dir, 'project2_core'), repositories, [search_path], locations)
 
         row = row_of(text, 'project2_core')
-        assert str(search_path / 'project2' / '2.x' / 'core') in row
+        assert contract(search_path / 'project2' / '2.x' / 'core') in row
         assert 'not found' in row
 
     def test_a_dependency_without_a_worktree(self, project_dir, search_path):

@@ -8,6 +8,7 @@ from colocon import cli
 from colocon.config import Config
 from colocon.resolve import Location
 from colocon.runner import COLCON_BUILD_DIR
+from colocon.tree import contract
 
 
 def option_values(argv, name):
@@ -354,7 +355,7 @@ class TestDiagnose:
 
         out = capsys.readouterr().out
         assert 'project1  (project1.repos)' in out
-        assert str(search_path / 'project2' / '2.x') in out
+        assert contract(search_path / 'project2' / '2.x') in out
 
     def test_the_origin_of_each_dependency_is_shown(
             self, config, colcon, search_path, write_pkg, write_repos, capsys):

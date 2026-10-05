@@ -65,7 +65,7 @@ def read_locations(content: dict) -> dict[str, Location]:
             raise ValueError(f"{LOCATIONS_KEY}: '{dependency}' declares no project")
 
         path = str(path)
-        if Path(path).is_absolute():
+        if Path(path).anchor:
             raise ValueError(
                     f"{LOCATIONS_KEY}: the path of '{dependency}' must be relative to the worktree")
         locations[dependency] = Location(project=str(project), path='' if path == '.' else path)
