@@ -15,6 +15,7 @@ import dataclasses
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Union
 
 import yaml
 
@@ -52,7 +53,9 @@ SET_COMMAND = re.compile(r'\bset\s*(\()\s*([A-Za-z0-9_]+)', re.IGNORECASE)
 #: is no way to tell what it would expand to.
 FIND_PACKAGE = re.compile(r'\bfind_package\s*\(\s*"?([A-Za-z0-9_.+-]+)', re.IGNORECASE)
 
-PathLike = str | Path
+#: ``Union`` rather than ``str | Path``: this alias is evaluated when the
+#: module is imported, and the shorter spelling needs Python 3.10.
+PathLike = Union[str, Path]
 
 
 @dataclasses.dataclass(frozen=True)

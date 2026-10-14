@@ -53,7 +53,8 @@ You may keep repositories under more than one search path; they are searched in 
 
 ## Installation
 
-Requires Python 3.10+ and `colcon` on `PATH`.
+Requires Python 3.9+ and `colcon` on `PATH`. The floor is Python 3.9 so that `colocon` runs on the system
+interpreter of distributions such as CentOS Stream 9.
 
 ```bash
 pipx install git+https://github.com/richiware/colocon.git
@@ -488,6 +489,17 @@ pre-commit install     # optional: runs the linter on every commit
 
 Install the package as editable before running the tests: the sources live in `src/`, so a non-editable install
 would leave `pytest` testing the installed copy instead of your working tree.
+
+### Keeping Python 3.9 working
+
+Annotations are written in the shorter `str | Path` form, which 3.9 does not understand. They are safe only
+because every module starts with `from __future__ import annotations`, leaving them as text; `pytest` checks
+that, and the message tells you what to add.
+
+Outside an annotation the form really is evaluated, so a type alias has to be written `Union[str, Path]` — see
+`PathLike` in `colocon/resolve.py`. No test can see that one: `ruff` does not report it, and `mypy` only does
+when run on 3.9, which it refuses to target from a newer interpreter. The workflow therefore lints and type
+checks on 3.9, and that job is what catches it.
 
 ## License
 

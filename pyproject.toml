@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "colocon"
 description = "Run colcon against repositories laid out as git worktrees."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{name = "Ricardo González", email = "ricardo@richiware.dev"}]
@@ -42,7 +42,7 @@ version = {attr = "colocon.__version__"}
 [tool.ruff]
 line-length = 120
 src = ["src"]
-target-version = "py310"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -51,7 +51,8 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 quote-style = "single"
 
 [tool.mypy]
-python_version = "3.10"
+# No `python_version`: mypy does not accept 3.9 as a target any more, so CI
+# runs it on 3.9 instead, which checks against the floor the package declares.
 mypy_path = "src"
 packages = ["colocon"]
 warn_unused_configs = true
