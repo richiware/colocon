@@ -12,6 +12,8 @@ from pathlib import Path
 
 from colocon.config import load_config
 from colocon.resolve import (
+    add_packages,
+    added_directories,
     expand_dependencies,
     mark_recursive,
     read_project_info,
@@ -34,6 +36,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             '-d', '--diagnose', action='store_true',
             help='Print the packages of the project, its dependencies and the path each one resolved to,\
              before carrying on.')
+    parser.add_argument(
+            '--add-package', action='append', default=[], metavar='PACKAGE',
+            help='Build PACKAGE as well, as though the project depended on it. The repos file has to say\
+             which version to take it from.')
+    parser.add_argument(
+            '--add-path', action='append', default=[], metavar='PATH',
+            help='Hand PATH to colcon as well, among the paths it is given.')
     parser.add_argument('rest', nargs=argparse.REMAINDER)
     return parser.parse_args(argv)
 
@@ -68,14 +77,25 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     repositories = read_repositories(options.project_dir, project_info.name)
     repositories = mark_recursive(repositories, config.recursive_projects)
+
+    try:
+        project_info = add_packages(
+                project_info, options.add_package, repositories, config.dependency_locations)
+        extra_paths = added_directories(options.add_path)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+
     project_info = expand_dependencies(
             project_info, repositories, config.search_paths, config.dependency_locations)
     resolved = resolve_paths(
-            project_info, repositories, config.search_paths, config.dependency_locations)
+            project_info, repositories, config.search_paths, config.dependency_locations,
+            extra_paths=extra_paths)
     if options.diagnose:
         print(format_tree(
                 project_info, repositories, config.search_paths, config.dependency_locations,
-                project_dir=Path(options.project_dir).resolve(), glyphs=glyphs_for(sys.stdout)))
+                project_dir=Path(options.project_dir).resolve(), extra_paths=extra_paths,
+                glyphs=glyphs_for(sys.stdout)))
 
     for name in resolved.missing:
         print('Cannot find path for ' + name, file=sys.stderr)

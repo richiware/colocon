@@ -43,6 +43,10 @@ PROJECT_SETTINGS = 'project_settings.cmake'
 #: Variable of `PROJECT_SETTINGS` listing the packages to look for.
 MODULE_FIND_PACKAGES = 'MODULE_FIND_PACKAGES'
 
+#: Arguments naming something to build besides what the project declares.
+ADD_PACKAGE = '--add-package'
+ADD_PATH = '--add-path'
+
 #: ``set(<name> ...)``. The command name is case insensitive, the variable is
 #: not, so the name is matched afterwards rather than by the pattern.
 SET_COMMAND = re.compile(r'\bset\s*(\()\s*([A-Za-z0-9_]+)', re.IGNORECASE)
@@ -78,16 +82,18 @@ class ProjectInfo:
 
 @dataclasses.dataclass(frozen=True)
 class Origin:
-    """Where a dependency was declared.
+    """Where a dependency was asked for.
 
     `key` is the key of the ``colcon.pkg`` declaring it, and `line` the line of
     the ``CMakeLists.txt`` looking for it; whichever kind of file `file` is,
-    only one of the two is set.
+    only one of the two is set. A dependency no file asked for has `option`
+    instead, naming the argument that did.
     """
 
-    file: Path
+    file: Path | None = None
     key: str = ''
     line: int = 0
+    option: str = ''
 
 
 @dataclasses.dataclass(frozen=True)
@@ -542,16 +548,69 @@ def expand_dependencies(
             project_info, dependencies=tuple(dependencies), origins=origins)
 
 
+def add_packages(
+    project_info: ProjectInfo,
+    packages: Iterable[str],
+    repositories: Mapping[str, Repository],
+    locations: Mapping[str, Location] | None = None,
+    option: str = ADD_PACKAGE,
+) -> ProjectInfo:
+    """Add `packages` to what the project depends on, as an argument asked.
+
+    An added package is a dependency like any the project declares: it is
+    looked up in the *repos* file, followed to its own dependencies, and handed
+    to `colcon`. One the project already declares keeps the place it was
+    declared in.
+
+    Raises `ValueError` naming a package the *repos* file says nothing about,
+    there being no version to build it from.
+    """
+    dependencies = list(project_info.dependencies)
+    origins = dict(project_info.origins)
+
+    for package in packages or ():
+        repository, _path = dependency_location(package, locations)
+        if repository not in repositories:
+            wanted = f"'{package}'" if repository == package else f"'{package}', which lives in '{repository}',"
+            raise ValueError(f'{option}: {wanted} is not listed in {project_info.name}.repos')
+        if package in origins or package in dependencies:
+            continue
+        dependencies.append(package)
+        origins[package] = Origin(option=option)
+
+    return dataclasses.replace(project_info, dependencies=tuple(dependencies), origins=origins)
+
+
+def added_directories(paths: Iterable[PathLike], option: str = ADD_PATH) -> tuple[Path, ...]:
+    """Make the directories an argument gave absolute, in the order given.
+
+    Raises `ValueError` naming one that is no directory: every other path
+    `colocon` hands `colcon` is one it has seen on disk, and a path that is not
+    there would only turn into a puzzling `colcon` failure later.
+    """
+    directories: list[Path] = []
+    for path in paths or ():
+        directory = Path(path).expanduser().resolve()
+        if not directory.is_dir():
+            raise ValueError(f'{option}: {path} is not a directory')
+        if directory not in directories:
+            directories.append(directory)
+    return tuple(directories)
+
+
 def resolve_paths(
     project_info: ProjectInfo,
     repositories: dict[str, Repository],
     search_paths: Iterable[PathLike],
     locations: Mapping[str, Location] | None = None,
+    extra_paths: Sequence[Path] = (),
 ) -> ResolvedPaths:
     """Resolve the project and its dependencies to directories.
 
     `locations` places a dependency inside another repository, so that only the
-    directory holding it is used rather than the whole worktree.
+    directory holding it is used rather than the whole worktree. `extra_paths`
+    are directories an argument added, which belong to no repository and are
+    passed on as they are.
     """
     search_paths = tuple(search_paths)
     paths = []
@@ -575,6 +634,7 @@ def resolve_paths(
             else:
                 paths.append(str(directory))
 
+    paths += [str(path) for path in extra_paths]
     paths += [str(package_dir) for package_dir in project_info.package_dirs]
 
     return ResolvedPaths(

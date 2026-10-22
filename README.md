@@ -12,6 +12,7 @@ paths to `colcon`, and leaves every other decision to `colcon` itself.
 - [Repository layout](#repository-layout)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Building something the project does not declare](#building-something-the-project-does-not-declare)
 - [Diagnosing a project](#diagnosing-a-project)
 - [Dependencies inside another repository](#dependencies-inside-another-repository)
 - [Repositories holding several packages](#repositories-holding-several-packages)
@@ -163,9 +164,37 @@ colocon test
 | --- | --- |
 | `-p`, `--project-dir DIR` | Root of the project to build. Defaults to the working directory. |
 | `-d`, `--diagnose` | Print what `colocon` made of the project before carrying on — see [Diagnosing a project](#diagnosing-a-project). |
+| `--add-package PACKAGE` | Build `PACKAGE` too, as though the project declared it. Repeatable. |
+| `--add-path PATH` | Hand `PATH` to `colcon` as well. Repeatable. |
 
 They must come **before** the verb: everything from the verb onwards belongs to `colcon`, so `colocon build -d`
 forwards `-d` to `colcon` rather than acting on it.
+
+### Building something the project does not declare
+
+`--add-package` builds a package the project says nothing about, which is what you want when a fix spans two
+repositories and the one you are standing in has no reason to name the other. The *repos* file still decides
+which version to take, so the package has to be listed there:
+
+```console
+$ colocon --add-package eros --add-path ~/projects/galileo build --mixin debug
+colcon build --paths ~/repos/quasar/2.3.x ~/repos/eros/1.4.x ~/projects/galileo ~/repos/nebula/main \
+             --mixin debug
+```
+
+An added package is a dependency like any other: it is looked up through
+[`dependency-locations`](#dependencies-inside-another-repository) if one places it inside another repository,
+and it is followed to its own dependencies. Naming one the *repos* file does not list is refused outright,
+rather than quietly built without it:
+
+```console
+$ colocon --add-package eros build
+--add-package: 'eros' is not listed in nebula.repos
+```
+
+`--add-path` adds a directory of its own, for a checkout that belongs to no repository of the *repos* file. It
+is passed on as it is, among the paths `colcon` is given, and a path that is not a directory is refused the same
+way. Both arguments may be repeated, and both show in the tree that [`-d`](#diagnosing-a-project) prints.
 
 ### What `colocon` adds
 
@@ -187,7 +216,7 @@ neither `--build-base` nor `--install-base`, and forwards both untouched when yo
 | --- | --- |
 | `0` | Success. |
 | `1` | `colcon.pkg` could not be read, or no verb was given. |
-| `2` | An argument or a configuration entry was rejected. |
+| `2` | An argument or a configuration entry was rejected, an unlisted `--add-package` among them. |
 | `130` | Interrupted with <kbd>Ctrl</kbd>+<kbd>C</kbd>. |
 | *other* | Whatever `colcon` returned, forwarded unchanged. |
 

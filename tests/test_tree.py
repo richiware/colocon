@@ -256,3 +256,38 @@ class TestOriginsInTheTree:
 
         text.encode('ascii')
         assert 'colcon.pkg (dependencies)' in text
+
+
+class TestAddedToTheTree:
+    """What an argument added, shown as such."""
+
+    def repositories(self):
+        return {'project2': Repository(name='project2', version='2.x')}
+
+    def test_an_added_package_names_the_argument(self, project_dir, search_path):
+        origins = {'project2': Origin(option='--add-package')}
+
+        text = format_tree(
+                info(project_dir, 'project2', origins=origins), self.repositories(), [search_path])
+
+        assert 'given with --add-package' in text
+
+    def test_an_origin_of_no_kind_at_all(self):
+        assert format_origin(Origin()) == 'of no stated origin'
+
+    def test_added_paths_are_listed(self, project_dir, search_path):
+        text = format_tree(
+                info(project_dir), {}, [search_path], extra_paths=(search_path, project_dir))
+
+        assert 'added paths (2)' in text
+        assert str(search_path) in text
+
+    def test_no_section_without_any(self, project_dir, search_path):
+        text = format_tree(info(project_dir), {}, [search_path])
+
+        assert 'added paths' not in text
+
+    def test_the_section_sits_between_the_packages_and_the_dependencies(self, project_dir, search_path):
+        text = format_tree(info(project_dir), {}, [search_path], extra_paths=(search_path,))
+
+        assert text.index('packages (') < text.index('added paths (') < text.index('dependencies (')

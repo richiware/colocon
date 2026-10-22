@@ -29,6 +29,10 @@ chain leading back on itself terminates.
 * Must take the repositories whose worktree holds several packages from the `recursive-projects` list of the
 configuration file, and pass each of them to `colcon` through `--base-paths` rather than `--paths`. A `recursive`
 tag in a *repos* file must not be read.
+* Must offer `--add-package`, before the verb and repeatable, adding a package to the project's dependencies as
+though the project declared it, taking its version from the *repos* file and failing when that file does not
+list it.
+* Must offer `--add-path`, before the verb and repeatable, adding a directory to the paths passed to `colcon`.
 * Must leave the build and install directories to `colcon`. `colocon` must never add `--build-base` nor
 `--install-base`, and must forward them untouched when the user passes them.
 * Must default `--mixin` to `rel-with-deb-info` for the `build` verb, unless the user asks for a mixin.

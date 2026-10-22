@@ -343,6 +343,110 @@ class TestCompileCommands:
         assert 'broken database' in capsys.readouterr().err
 
 
+class TestAddPackage:
+    """`--add-package` builds something the project does not declare."""
+
+    REPOS = {'project2': {'version': '2.x'}, 'project3': {'version': '3.x'}}
+
+    def test_the_package_reaches_colcon(
+            self, config, colcon, search_path, write_pkg, write_repos):
+        config(search_paths=(search_path,))
+        write_repos('project1', self.REPOS)
+        project_dir = write_pkg(name='project1', dependencies=['project2'])
+
+        assert cli.main(['--add-package', 'project3', '-p', str(project_dir), 'build']) == 0
+
+        assert option_values(colcon.calls[0], '--paths') == [
+            str(search_path / 'project2' / '2.x'),
+            str(search_path / 'project3' / '3.x'),
+            str(project_dir),
+        ]
+
+    def test_the_argument_may_be_repeated(
+            self, config, colcon, search_path, write_pkg, write_repos):
+        config(search_paths=(search_path,))
+        write_repos('project1', self.REPOS)
+        project_dir = write_pkg(name='project1')
+
+        assert cli.main([
+            '--add-package', 'project2', '--add-package', 'project3',
+            '-p', str(project_dir), 'build']) == 0
+
+        argv = colcon.calls[0]
+        assert str(search_path / 'project2' / '2.x') in argv
+        assert str(search_path / 'project3' / '3.x') in argv
+
+    def test_an_added_package_is_followed_to_its_own_dependencies(
+            self, config, colcon, chain, search_path, write_pkg, write_repos):
+        # project2 declares project3, and is only here because of the argument.
+        config(search_paths=(search_path,))
+        write_repos('project1', self.REPOS)
+        project_dir = write_pkg(name='project1')
+
+        assert cli.main(['--add-package', 'project2', '-p', str(project_dir), 'build']) == 0
+
+        argv = colcon.calls[0]
+        assert str(chain.project2) in argv
+        assert str(chain.project3) in argv
+
+    def test_a_package_the_repos_file_does_not_list(
+            self, config, colcon, search_path, write_pkg, write_repos, capsys):
+        config(search_paths=(search_path,))
+        write_repos('project1', self.REPOS)
+        project_dir = write_pkg(name='project1')
+
+        assert cli.main(['--add-package', 'project9', '-p', str(project_dir), 'build']) == 2
+
+        assert 'project9' in capsys.readouterr().err
+        assert colcon.calls == []
+
+    def test_it_shows_in_the_tree(
+            self, config, colcon, search_path, write_pkg, write_repos, capsys):
+        config(search_paths=(search_path,))
+        write_repos('project1', self.REPOS)
+        project_dir = write_pkg(name='project1')
+
+        assert cli.main(['-d', '--add-package', 'project2', '-p', str(project_dir), 'build']) == 0
+
+        assert 'given with --add-package' in capsys.readouterr().out
+
+
+class TestAddPath:
+    """`--add-path` hands colcon a directory of its own."""
+
+    def test_the_path_reaches_colcon(self, config, colcon, search_path, write_pkg):
+        project_dir = write_pkg(name='project1')
+
+        assert cli.main(['--add-path', str(search_path), '-p', str(project_dir), 'build']) == 0
+
+        assert option_values(colcon.calls[0], '--paths') == [str(search_path), str(project_dir)]
+
+    def test_the_argument_may_be_repeated(self, config, colcon, search_path, project_dir, write_pkg):
+        write_pkg(name='project1')
+
+        assert cli.main([
+            '--add-path', str(search_path), '--add-path', str(search_path / 'project2'),
+            '-p', str(project_dir), 'build']) == 0
+
+        assert option_values(colcon.calls[0], '--paths') == [
+            str(search_path), str(search_path / 'project2'), str(project_dir)]
+
+    def test_a_path_that_is_not_there(self, config, colcon, tmp_path, write_pkg, capsys):
+        project_dir = write_pkg(name='project1')
+
+        assert cli.main(['--add-path', str(tmp_path / 'absent'), '-p', str(project_dir), 'build']) == 2
+
+        assert 'is not a directory' in capsys.readouterr().err
+        assert colcon.calls == []
+
+    def test_it_shows_in_the_tree(self, config, colcon, search_path, write_pkg, capsys):
+        project_dir = write_pkg(name='project1')
+
+        assert cli.main(['-d', '--add-path', str(search_path), '-p', str(project_dir), 'build']) == 0
+
+        assert 'added paths (1)' in capsys.readouterr().out
+
+
 class TestDiagnose:
     """`-d` shows what colocon made of the project, then carries on."""
 
@@ -395,7 +499,15 @@ class TestParseArgs:
         options = cli.parse_args([])
         assert options.project_dir == '.'
         assert options.diagnose is False
+        assert options.add_package == []
+        assert options.add_path == []
         assert options.rest == []
+
+    def test_the_added_arguments_accumulate(self):
+        options = cli.parse_args(['--add-package', 'a', '--add-package', 'b', '--add-path', '/x', 'build'])
+        assert options.add_package == ['a', 'b']
+        assert options.add_path == ['/x']
+        assert options.rest == ['build']
 
     def test_diagnose_flag(self):
         assert cli.parse_args(['-d', 'build']).diagnose is True

@@ -71,8 +71,14 @@ def format_origin(origin: Origin, project_dir: Path | None = None) -> str:
 
     The file is written relative to `project_dir` when it lies inside it, as
     every declaration `colocon` reads does, and the place within it is either
-    the key of a ``colcon.pkg`` or the line of a ``CMakeLists.txt``.
+    the key of a ``colcon.pkg`` or the line of a ``CMakeLists.txt``. A
+    dependency an argument asked for names that argument instead.
     """
+    if origin.option:
+        return f'given with {origin.option}'
+    if origin.file is None:
+        return 'of no stated origin'
+
     if project_dir is not None and origin.file.is_relative_to(project_dir):
         text = origin.file.relative_to(project_dir).as_posix()
     else:
@@ -166,6 +172,7 @@ def format_tree(
     search_paths: Sequence[Path],
     locations: Mapping[str, Location] | None = None,
     project_dir: Path | None = None,
+    extra_paths: Sequence[Path] = (),
     glyphs: Glyphs = UNICODE,
 ) -> str:
     """Draw the packages of a project, its dependencies and where each resolved.
@@ -197,6 +204,11 @@ def format_tree(
             [(f'{package_dir.name.ljust(package_width)}  {contract(package_dir)}', ())
              for package_dir in project_info.package_dirs],
             False, glyphs)
+    if extra_paths:
+        lines += _section(
+                f'added paths ({len(extra_paths)})',
+                [(contract(path), ()) for path in extra_paths],
+                False, glyphs)
     lines += _section(
             f'dependencies ({len(rows)})',
             [(row.render(widths), _declared_in(row.name, project_info, project_dir)) for row in rows],

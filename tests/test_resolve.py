@@ -2,17 +2,21 @@
 # Licensed under the Apache License, Version 2.0
 
 import shutil
+from pathlib import Path
 
 import pytest
 import yaml
 
 from colocon.resolve import (
+    ADD_PACKAGE,
     DEFAULT_VERSION,
     DEPENDENCY_KEYS,
     Location,
     Origin,
     ProjectInfo,
     Repository,
+    add_packages,
+    added_directories,
     cmake_dependencies,
     declared_cmake_dependencies,
     declared_dependencies,
@@ -1219,3 +1223,147 @@ class TestMarkRecursive:
         mark_recursive(self.REPOSITORIES, {'project2'})
 
         assert self.REPOSITORIES['project2'].recursive is False
+
+
+class TestAddPackages:
+    """Packages an argument asks for besides what the project declares."""
+
+    REPOSITORIES = {
+        'project2': Repository(name='project2', version='2.x'),
+        'project3': Repository(name='project3', version='3.x'),
+    }
+
+    def info(self, project_dir, *dependencies):
+        return ProjectInfo(
+                name='project1',
+                dependencies=dependencies,
+                package_dirs=(project_dir,),
+                origins={
+                    dependency: Origin(file=project_dir / 'colcon.pkg', key='dependencies')
+                    for dependency in dependencies
+                })
+
+    def test_without_any(self, project_dir):
+        original = self.info(project_dir, 'project2')
+        assert add_packages(original, [], self.REPOSITORIES) == original
+
+    def test_a_package_becomes_a_dependency(self, project_dir):
+        added = add_packages(self.info(project_dir, 'project2'), ['project3'], self.REPOSITORIES)
+
+        assert added.dependencies == ('project2', 'project3')
+
+    def test_the_argument_is_the_origin(self, project_dir):
+        added = add_packages(self.info(project_dir), ['project2'], self.REPOSITORIES)
+
+        assert added.origins['project2'] == Origin(option=ADD_PACKAGE)
+
+    def test_several_packages_keep_their_order(self, project_dir):
+        added = add_packages(self.info(project_dir), ['project3', 'project2'], self.REPOSITORIES)
+
+        assert added.dependencies == ('project3', 'project2')
+
+    def test_a_package_named_twice_is_added_once(self, project_dir):
+        added = add_packages(self.info(project_dir), ['project2', 'project2'], self.REPOSITORIES)
+
+        assert added.dependencies == ('project2',)
+
+    def test_a_package_the_project_declares_keeps_its_origin(self, project_dir):
+        original = self.info(project_dir, 'project2')
+
+        added = add_packages(original, ['project2'], self.REPOSITORIES)
+
+        assert added.dependencies == ('project2',)
+        assert added.origins['project2'] == original.origins['project2']
+
+    def test_the_project_is_otherwise_untouched(self, project_dir):
+        original = self.info(project_dir, 'project2')
+
+        added = add_packages(original, ['project3'], self.REPOSITORIES)
+
+        assert added.name == original.name
+        assert added.package_dirs == original.package_dirs
+
+    def test_a_package_the_repos_file_does_not_list(self, project_dir):
+        with pytest.raises(ValueError, match="'project9' is not listed in project1.repos"):
+            add_packages(self.info(project_dir), [UNKNOWN_PROJECT], self.REPOSITORIES)
+
+    def test_a_package_placed_in_a_repository_that_is_not_listed(self, project_dir):
+        locations = {'project9_core': Location(project=UNKNOWN_PROJECT, path='core')}
+
+        with pytest.raises(ValueError, match="which lives in 'project9'"):
+            add_packages(self.info(project_dir), ['project9_core'], self.REPOSITORIES, locations)
+
+    def test_a_package_placed_in_a_repository_that_is_listed(self, project_dir):
+        locations = {'project2_core': Location(project='project2', path='core')}
+
+        added = add_packages(self.info(project_dir), ['project2_core'], self.REPOSITORIES, locations)
+
+        assert added.dependencies == ('project2_core',)
+
+    def test_nothing_is_added_when_one_package_fails(self, project_dir):
+        original = self.info(project_dir)
+
+        with pytest.raises(ValueError):
+            add_packages(original, ['project2', UNKNOWN_PROJECT], self.REPOSITORIES)
+
+        assert original.dependencies == ()
+
+
+class TestAddedDirectories:
+    """Directories an argument hands to colcon as they are."""
+
+    def test_without_any(self):
+        assert added_directories([]) == ()
+
+    def test_a_directory_is_made_absolute(self, project_dir, monkeypatch):
+        monkeypatch.chdir(project_dir.parent)
+
+        assert added_directories([project_dir.name]) == (project_dir.resolve(),)
+
+    def test_the_order_given_is_kept(self, project_dir, search_path):
+        assert added_directories([search_path, project_dir]) == (
+            search_path.resolve(), project_dir.resolve())
+
+    def test_a_directory_given_twice_is_passed_once(self, project_dir):
+        assert added_directories([project_dir, project_dir]) == (project_dir.resolve(),)
+
+    def test_a_home_directory(self):
+        assert added_directories(['~']) == (Path.home().resolve(),)
+
+    def test_a_directory_that_is_not_there(self, tmp_path):
+        with pytest.raises(ValueError, match='is not a directory'):
+            added_directories([tmp_path / 'absent'])
+
+    def test_a_file_is_not_a_directory(self, project_dir):
+        (project_dir / 'colcon.pkg').write_text('name: project1\n')
+
+        with pytest.raises(ValueError, match='is not a directory'):
+            added_directories([project_dir / 'colcon.pkg'])
+
+
+class TestExtraPathsInTheResolution:
+
+    def info(self, project_dir, *dependencies):
+        return ProjectInfo(name='project1', dependencies=dependencies, package_dirs=(project_dir,))
+
+    def test_an_added_path_is_passed(self, project_dir, search_path):
+        resolved = resolve_paths(
+                self.info(project_dir), {}, [search_path], extra_paths=(search_path,))
+
+        assert resolved.paths == (str(search_path), str(project_dir))
+
+    def test_added_paths_come_after_the_dependencies_and_before_the_project(
+            self, project_dir, search_path):
+        repositories = {'project2': Repository(name='project2', version='2.x')}
+
+        resolved = resolve_paths(
+                self.info(project_dir, 'project2'), repositories, [search_path],
+                extra_paths=(search_path,))
+
+        assert resolved.paths == (
+            str(search_path / 'project2' / '2.x'), str(search_path), str(project_dir))
+
+    def test_without_any(self, project_dir, search_path):
+        resolved = resolve_paths(self.info(project_dir), {}, [search_path])
+
+        assert resolved.paths == (str(project_dir),)
