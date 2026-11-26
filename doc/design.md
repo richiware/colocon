@@ -33,8 +33,10 @@ tag in a *repos* file must not be read.
 though the project declared it, taking its version from the *repos* file and failing when that file does not
 list it.
 * Must offer `--add-path`, before the verb and repeatable, adding a directory to the paths passed to `colcon`.
-* Must leave the build and install directories to `colcon`. `colocon` must never add `--build-base` nor
-`--install-base`, and must forward them untouched when the user passes them.
+* Must read optional `build-base` and `install-base` directories from the configuration file and pass them to
+`colcon` as `--build-base` and `--install-base` for the verbs accepting them, `build` and `test`. Without them,
+the build and install directories must be left to `colcon`. A `--build-base` or `--install-base` the user passes
+must be forwarded untouched and take precedence over the configured one.
 * Must default `--mixin` to `rel-with-deb-info` for the `build` verb, unless the user asks for a mixin.
 * After calling `colcon`, `colocon` has to find all `compile_commands.json` and join them to a unique
 `compile_commands.json`.

@@ -19,9 +19,12 @@ DEFAULT_MIXIN = 'rel-with-deb-info'
 #: Verbs that accept ``--paths`` and ``--base-paths``.
 PATH_VERBS = frozenset({'build', 'test', 'graph'})
 
-#: Build directory colcon uses when it is not told otherwise. `colocon` never
-#: passes ``--build-base``, so this is where the compilation databases are
-#: looked for unless the user asked for somewhere else.
+#: Verbs that accept ``--build-base`` and ``--install-base``.
+BASE_VERBS = frozenset({'build', 'test'})
+
+#: Build directory colcon uses when it is not told otherwise, which is where
+#: the compilation databases are looked for unless a ``--build-base`` was
+#: configured or passed.
 COLCON_BUILD_DIR = 'build'
 
 #: Exit code conventionally reported for a command killed by SIGINT.
@@ -36,25 +39,40 @@ def supports_paths(verb: str) -> bool:
     return verb in PATH_VERBS
 
 
+def _has_option(args: Sequence[str], name: str) -> bool:
+    """Whether `name` is in `args`, either alone or as ``name=value``."""
+    return any(arg == name or arg.startswith(name + '=') for arg in args)
+
+
 def _option_value(args: Sequence[str], name: str) -> str:
-    """Return the value following `name` in `args`."""
-    position = args.index(name)
-    if position + 1 >= len(args):
-        raise ValueError(name + ' requires a value')
-    return args[position + 1]
+    """Return the value given to `name` in `args`, the last one if repeated."""
+    value = None
+    for position, arg in enumerate(args):
+        if arg == name:
+            if position + 1 >= len(args):
+                raise ValueError(name + ' requires a value')
+            value = args[position + 1]
+        elif arg.startswith(name + '='):
+            value = arg[len(name) + 1:]
+    if value is None:
+        raise ValueError(name + ' is not given')
+    return value
 
 
-def build_argv(rest: Sequence[str], resolved: ResolvedPaths) -> tuple[list, str]:
+def build_argv(
+        rest: Sequence[str], resolved: ResolvedPaths,
+        build_base: str | Path | None = None,
+        install_base: str | Path | None = None) -> tuple[list, str]:
     """Build the ``colcon`` command line.
 
     `rest` is the verb followed by the arguments meant for ``colcon``. Returns
     the command line and the build directory, which the caller needs to collect
     the compilation databases afterwards.
 
-    Where `colcon` builds and installs is left to `colcon`: ``--build-base``
-    and ``--install-base`` are never added, and are forwarded untouched when
-    the user passes them. The build directory is therefore only read, never
-    chosen.
+    `build_base` and `install_base` are the directories of the configuration.
+    Each is passed as ``--build-base`` or ``--install-base`` to the verbs
+    accepting them, unless the user passed that option, which is then
+    forwarded untouched and wins. Without either, the choice is `colcon`'s.
     """
     if not rest:
         raise ValueError('no colcon verb given')
@@ -75,8 +93,14 @@ def build_argv(rest: Sequence[str], resolved: ResolvedPaths) -> tuple[list, str]
         argv += ['--mixin', DEFAULT_MIXIN]
 
     build_dir = COLCON_BUILD_DIR
-    if '--build-base' in forwarded:
+    if _has_option(forwarded, '--build-base'):
         build_dir = _option_value(forwarded, '--build-base')
+    elif verb in BASE_VERBS and build_base is not None:
+        build_dir = str(build_base)
+        argv += ['--build-base', build_dir]
+
+    if verb in BASE_VERBS and install_base is not None and not _has_option(forwarded, '--install-base'):
+        argv += ['--install-base', str(install_base)]
 
     return argv + forwarded, build_dir
 

@@ -105,7 +105,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     try:
-        colcon_argv, build_dir = build_argv(options.rest, resolved)
+        colcon_argv, build_dir = build_argv(
+                options.rest, resolved, build_base=config.build_base, install_base=config.install_base)
     except ValueError as error:
         print(str(error), file=sys.stderr)
         return 2

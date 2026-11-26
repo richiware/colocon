@@ -71,7 +71,7 @@ class TestBuildArgv:
 
 
 class TestBuildAndInstallDirectories:
-    """Where colcon builds and installs is colcon's business, not colocon's."""
+    """Without a configured directory, where colcon builds and installs is colcon's business."""
 
     @pytest.mark.parametrize('verb', ['build', 'test', 'graph', 'list'])
     def test_no_directory_is_chosen(self, verb):
@@ -102,6 +102,63 @@ class TestBuildAndInstallDirectories:
     def test_build_base_without_value(self):
         with pytest.raises(ValueError, match='--build-base'):
             build_argv(['build', '--build-base'], RESOLVED)
+
+
+    def test_build_base_given_with_equals_sign(self):
+        argv, build_dir = build_argv(['build', '--build-base=out'], RESOLVED)
+
+        assert argv[-1] == '--build-base=out'
+        assert build_dir == 'out'
+
+
+class TestConfiguredDirectories:
+    """Directories stated in the configuration file."""
+
+    @pytest.mark.parametrize('verb', ['build', 'test'])
+    def test_configured_directories_are_passed(self, verb):
+        argv, build_dir = build_argv([verb], RESOLVED, build_base='/b', install_base='/i')
+
+        assert option_value(argv, '--build-base') == '/b'
+        assert option_value(argv, '--install-base') == '/i'
+        assert build_dir == '/b'
+
+    @pytest.mark.parametrize('verb', ['graph', 'list', 'info'])
+    def test_not_passed_to_verbs_that_do_not_accept_them(self, verb):
+        argv, build_dir = build_argv([verb], RESOLVED, build_base='/b', install_base='/i')
+
+        assert '--build-base' not in argv
+        assert '--install-base' not in argv
+        assert build_dir == COLCON_BUILD_DIR
+
+    def test_each_is_independent(self):
+        argv, build_dir = build_argv(['build'], RESOLVED, install_base='/i')
+
+        assert '--build-base' not in argv
+        assert option_value(argv, '--install-base') == '/i'
+        assert build_dir == COLCON_BUILD_DIR
+
+    def test_paths_are_turned_into_text(self, tmp_path):
+        argv, build_dir = build_argv(['build'], RESOLVED, build_base=tmp_path)
+
+        assert option_value(argv, '--build-base') == str(tmp_path)
+        assert build_dir == str(tmp_path)
+
+    @pytest.mark.parametrize('given', [['--build-base', 'out'], ['--build-base=out']])
+    def test_command_line_build_base_wins(self, given):
+        argv, build_dir = build_argv(['build', *given], RESOLVED, build_base='/b', install_base='/i')
+
+        assert '/b' not in argv
+        assert argv[-len(given):] == given
+        assert option_value(argv, '--install-base') == '/i'
+        assert build_dir == 'out'
+
+    @pytest.mark.parametrize('given', [['--install-base', 'out'], ['--install-base=out']])
+    def test_command_line_install_base_wins(self, given):
+        argv, _ = build_argv(['build', *given], RESOLVED, build_base='/b', install_base='/i')
+
+        assert '/i' not in argv
+        assert argv[-len(given):] == given
+        assert option_value(argv, '--build-base') == '/b'
 
 
 class TestMixin:

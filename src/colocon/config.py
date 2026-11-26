@@ -20,6 +20,10 @@ LOCATIONS_KEY = 'dependency-locations'
 #: Key holding the repositories whose worktree holds more than one package.
 RECURSIVE_KEY = 'recursive-projects'
 
+#: Keys holding the build and install directories handed to `colcon`.
+BUILD_BASE_KEY = 'build-base'
+INSTALL_BASE_KEY = 'install-base'
+
 
 @dataclasses.dataclass(frozen=True)
 class Config:
@@ -29,6 +33,8 @@ class Config:
     compile_commands: bool = False
     dependency_locations: dict[str, Location] = dataclasses.field(default_factory=dict)
     recursive_projects: frozenset[str] = frozenset()
+    build_base: Path | None = None
+    install_base: Path | None = None
 
 
 def default_config_path() -> Path:
@@ -94,6 +100,25 @@ def read_recursive_projects(content: dict) -> frozenset[str]:
     return frozenset(projects)
 
 
+def read_base(content: dict, key: str) -> Path | None:
+    """Read the directory stated under `key`, ``build-base`` or ``install-base``.
+
+    Returns `None` when the key is absent, leaving the choice to `colcon`. A
+    leading ``~`` is expanded; a relative path is left relative, for `colcon`
+    to resolve against the directory it runs in.
+
+    Raises `ValueError` on anything that is not a non-empty path.
+    """
+    base = content.get(key)
+    if base is None:
+        return None
+
+    if not isinstance(base, str) or not base:
+        raise ValueError(f'{key}: must be a directory path')
+
+    return Path(base).expanduser()
+
+
 def load_config(path: str | Path | None = None) -> Config:
     """Load the configuration from `path`, falling back to the user's file.
 
@@ -114,4 +139,6 @@ def load_config(path: str | Path | None = None) -> Config:
         compile_commands=bool(content.get('compile_commands', False)),
         dependency_locations=read_locations(content),
         recursive_projects=read_recursive_projects(content),
+        build_base=read_base(content, BUILD_BASE_KEY),
+        install_base=read_base(content, INSTALL_BASE_KEY),
     )

@@ -226,3 +226,40 @@ class TestRecursiveProjects:
     def test_an_empty_entry(self, tmp_path):
         with pytest.raises(ValueError, match='is not a project name'):
             self.load(tmp_path, 'recursive-projects:\n  - ""\n')
+
+
+class TestBases:
+    """Build and install directories handed to colcon."""
+
+    def load(self, tmp_path, body):
+        config_path = tmp_path / 'colocon.yaml'
+        config_path.write_text(body)
+        return load_config(config_path)
+
+    def test_absent_keys(self, tmp_path):
+        config = self.load(tmp_path, 'search-paths: ["/a"]\n')
+
+        assert config.build_base is None
+        assert config.install_base is None
+
+    def test_both_are_read(self, tmp_path):
+        config = self.load(tmp_path, 'build-base: /out/build\ninstall-base: /out/install\n')
+
+        assert config.build_base == Path('/out/build')
+        assert config.install_base == Path('/out/install')
+
+    def test_tilde_is_expanded(self, tmp_path):
+        config = self.load(tmp_path, 'build-base: ~/build\n')
+
+        assert config.build_base == Path.home() / 'build'
+
+    def test_relative_path_is_kept_relative(self, tmp_path):
+        config = self.load(tmp_path, 'install-base: out/install\n')
+
+        assert config.install_base == Path('out/install')
+
+    @pytest.mark.parametrize('key', ['build-base', 'install-base'])
+    @pytest.mark.parametrize('value', ['""', '[a]', '{a: b}', '2'])
+    def test_not_a_path_is_rejected(self, tmp_path, key, value):
+        with pytest.raises(ValueError, match=key):
+            self.load(tmp_path, f'{key}: {value}\n')

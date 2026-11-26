@@ -16,6 +16,7 @@ paths to `colcon`, and leaves every other decision to `colcon` itself.
 - [Diagnosing a project](#diagnosing-a-project)
 - [Dependencies inside another repository](#dependencies-inside-another-repository)
 - [Repositories holding several packages](#repositories-holding-several-packages)
+- [Build and install directories](#build-and-install-directories)
 - [Usage](#usage)
 - [Describing a project](#describing-a-project)
 - [Projects of several packages](#projects-of-several-packages)
@@ -78,6 +79,8 @@ compile_commands: true
 | `compile_commands` | boolean | `false` | Join every `compile_commands.json` after a successful build. |
 | `dependency-locations` | mapping | empty | Dependencies that live inside another repository — see below. |
 | `recursive-projects` | list of names | empty | Repositories whose worktree holds several packages — see below. |
+| `build-base` | path | unset | Passed to `colcon` as `--build-base` — see [Build and install directories](#build-and-install-directories). |
+| `install-base` | path | unset | Passed to `colcon` as `--install-base` — see [Build and install directories](#build-and-install-directories). |
 
 A search path may start with `~`, which is expanded to your home directory. Environment variables are **not**
 expanded, so a path such as `$HOME/repos` silently matches nothing — write `~/repos` instead. A missing or empty
@@ -145,6 +148,29 @@ The list is read once for every project, which is the point of it being here: a 
 upstream, and rarely yours to edit, whereas which repositories hold several packages is a fact about your
 workspace. A name no *repos* file of the project at hand mentions is simply of no use to it.
 
+### Build and install directories
+
+By default `colocon` leaves `colcon` to choose where it builds and installs. `build-base` and `install-base` choose
+for it:
+
+```yaml
+build-base: ~/colcon/build
+install-base: ~/colcon/install
+```
+
+```console
+$ colocon build
+colcon build --paths ~/repos/quasar/2.3.x ~/repos/nebula/main --mixin rel-with-deb-info \
+             --build-base ~/colcon/build --install-base ~/colcon/install
+```
+
+- **Only `build` and `test` receive them**, the verbs of `colcon` that accept them.
+- **The command line wins.** A `--build-base` or `--install-base` you pass yourself is forwarded untouched, and the
+  configured one is then left out. Each key is independent of the other.
+- **A leading `~` is expanded**; environment variables are not. A relative path is left relative, and `colcon`
+  resolves it against the directory `colocon` runs in — not `--project-dir`.
+- **The compilation databases** are looked for under the configured `build-base`.
+
 ## Usage
 
 Run `colocon` from a worktree, with any `colcon` verb and arguments:
@@ -207,8 +233,11 @@ For the `build`, `test` and `graph` verbs:
 
 For `build` only, `--mixin rel-with-deb-info` is added unless you pass a `--mixin` of your own.
 
-Nothing else is touched. In particular `colocon` **never** chooses where `colcon` builds or installs: it adds
-neither `--build-base` nor `--install-base`, and forwards both untouched when you pass them.
+For `build` and `test`, `--build-base` and `--install-base` are added when the configuration sets
+[`build-base` or `install-base`](#build-and-install-directories), unless you pass them yourself.
+
+Nothing else is touched. Without that configuration `colocon` does not choose where `colcon` builds or installs,
+and a `--build-base` or `--install-base` you pass is always forwarded untouched.
 
 ### Exit codes
 
@@ -497,7 +526,8 @@ The cost is a handful of files read per dependency, so there is nothing to turn 
 With `compile_commands: true`, a successful build is followed by a merge of every `compile_commands.json` found
 under the build directory into a single one in the working directory, which is what most language servers expect.
 
-The build directory searched is `colcon`'s own default, `build`, or the one you passed with `--build-base`. The
+The build directory searched is the one you passed with `--build-base`, otherwise the configured `build-base`,
+otherwise `colcon`'s own default, `build`. The
 merge is pure Python — no `find`, `xargs` or `jq` needed — and a database that cannot be read is reported without
 failing the build.
 

@@ -82,6 +82,26 @@ class TestMain:
         argv = colcon.calls[0]
         assert argv[-4:] == ['--build-base', 'out', '--install-base', 'out/install']
 
+    def test_configured_directories_reach_colcon(self, config, colcon, write_pkg, tmp_path):
+        config(build_base=tmp_path / 'b', install_base=tmp_path / 'i')
+
+        assert cli.main(['-p', str(write_pkg(name='project1')), 'build']) == 0
+
+        argv = colcon.calls[0]
+        assert option_values(argv, '--build-base') == [str(tmp_path / 'b')]
+        assert option_values(argv, '--install-base') == [str(tmp_path / 'i')]
+
+    def test_requested_directories_override_the_configured_ones(self, config, colcon, write_pkg, tmp_path):
+        config(build_base=tmp_path / 'b', install_base=tmp_path / 'i')
+        project_dir = str(write_pkg(name='project1'))
+
+        assert cli.main(['-p', project_dir, 'build', '--build-base', 'out', '--install-base', 'out/i']) == 0
+
+        argv = colcon.calls[0]
+        assert argv.count('--build-base') == 1
+        assert argv.count('--install-base') == 1
+        assert argv[-4:] == ['--build-base', 'out', '--install-base', 'out/i']
+
     def test_colcon_exit_code_is_propagated(self, config, colcon, write_pkg):
         colcon.retcode = 17
         assert cli.main(['-p', str(write_pkg(name='project1')), 'build']) == 17
@@ -320,6 +340,15 @@ class TestCompileCommands:
         cli.main(['-p', str(write_pkg(name='project1')), 'build'])
 
         assert called == [COLCON_BUILD_DIR]
+
+    def test_configured_build_base_is_searched(self, config, colcon, monkeypatch, write_pkg, tmp_path):
+        config(compile_commands=True, build_base=tmp_path / 'b')
+        called = []
+        monkeypatch.setattr(cli, 'merge_compile_commands', lambda build_dir: called.append(build_dir))
+
+        cli.main(['-p', str(write_pkg(name='project1')), 'build'])
+
+        assert called == [str(tmp_path / 'b')]
 
     def test_not_joined_when_colcon_failed(self, config, colcon, monkeypatch, write_pkg):
         config(compile_commands=True)
